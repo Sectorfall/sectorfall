@@ -2277,7 +2277,9 @@ const ActionButton = ({ module, slotId, cooldown, active, weaponState, onTrigger
         if (!module) return React.createElement(IconWeaponPlaceholder, { color: '#555', opacity: 0.3 });
         if (slotId.startsWith('engine')) return React.createElement(IconEngine, { color: color });
         if (slotId.startsWith('active')) return React.createElement(IconShieldSlot, { color: color });
-        if (module.name.toLowerCase().includes('laser')) {
+        const rawModuleName = module?.name || module?.displayName || module?.display_name || module?.module_id || module?.item_id || '';
+        const moduleNameLower = String(rawModuleName).toLowerCase();
+        if (moduleNameLower.includes('laser')) {
             return React.createElement(IconWeaponLaser, { color: color });
         }
         return React.createElement(IconWeaponPlaceholder, { color: color, opacity: 1 });
@@ -2294,7 +2296,8 @@ const ActionButton = ({ module, slotId, cooldown, active, weaponState, onTrigger
     // Cooldown Normalization for Seeker Pods and standard weapons
     let cooldownPercent = 0;
     let showTimer = false;
-    const isMissile = effectiveModule?.name?.toLowerCase().includes('seeker pod');
+    const effectiveModuleName = String(effectiveModule?.name || effectiveModule?.displayName || effectiveModule?.display_name || effectiveModule?.module_id || effectiveModule?.item_id || '').toLowerCase();
+    const isMissile = effectiveModuleName.includes('seeker pod');
     if (cooldown > 0) {
         let maxCooldown = 1.0; // Default fallback
         if (isMissile) {
