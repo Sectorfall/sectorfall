@@ -7077,26 +7077,7 @@ const StationInterior = ({
                                         boxSizing: 'border-box'
                                     }
                                 }, 'IN CONTROL') : (
-                                    isInHangar ? null /* activation handled from right-side selected ship panel */ : React.createElement('button', {
-                                        onClick: (e) => { e.stopPropagation(); onActivateShip(ship); },
-                                        style: {
-                                            padding: '8px 16px',
-                                            height: '32px',
-                                            background: 'transparent',
-                                            border: '1px solid #ffcc00',
-                                            color: '#ffcc00',
-                                            fontSize: '9px',
-                                            fontWeight: 'bold',
-                                            cursor: 'pointer',
-                                            letterSpacing: '1px',
-                                            transition: 'all 0.2s',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center'
-                                        },
-                                        onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; },
-                                        onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; }
-                                    }, 'ACTIVATE') : React.createElement(React.Fragment, null,
+                                    isInHangar ? null /* activation handled from right-side selected ship panel */ : React.createElement(React.Fragment, null,
                                         React.createElement('button', {
                                             onClick: (e) => { e.stopPropagation(); onCommandShip(ship.id); },
                                             style: {
