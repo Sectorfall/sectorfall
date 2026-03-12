@@ -42,7 +42,7 @@ import { ASSETS, AUDIO_URLS, SUN_URL, ANOMALY_URL, ASTEROID_URL, NEBULA_URLS, WE
 import { ANOMALY_VERTEX_SHADER, ANOMALY_FRAGMENT_SHADER, SHIP_VERTEX_SHADER, SHIP_FRAGMENT_SHADER, FLUX_BEAM_VERTEX_SHADER, FLUX_BEAM_FRAGMENT_SHADER } from './data/shaders.js';
 const ARENA_BEACON_URL = STRUCTURE_URLS.arenaBeacon;
 const BATTLEGROUND_BEACON_URL = STRUCTURE_URLS.battlegroundBeacon || STRUCTURE_URLS.arenaBeacon;
-const DEFAULT_BATTLEGROUND_BOUNDARY_TEXTURE_URL = 'https://rosebud.ai/assets/nebula-radiation-green-plain-cloud-v1.webp?gkLX';
+const DEFAULT_BATTLEGROUND_BOUNDARY_TEXTURE_URL = '/assets/nebula-radiation-green-plain-cloud-v1.webp';
 
 function getSyntheticSystem(systemId) {
     if (typeof systemId === 'string' && systemId.startsWith('bg:pve:')) {
@@ -887,7 +887,7 @@ export const applyCatalystToItem = (item, catalystId) => {
     return newItem;
 };
 
-const TRIDRONE_URL = 'https://rosebud.ai/assets/tridrone.png?S2gk';
+const TRIDRONE_URL = '/assets/tridrone.png';
 
 class Drone {
     constructor(scene, manager, dData, slotId, owner) {
@@ -2811,7 +2811,7 @@ spawnOrUpdateRemotePlayer(state) {
     createShipVisual(shipType, isLocal = false) {
         const normalizedShipType = normalizeShipTypeKey(shipType);
         const shipConfig = SHIP_REGISTRY[normalizedShipType] || SHIP_REGISTRY['OMNI SCOUT'];
-        const spriteUrl = shipConfig.spriteUrl || 'https://rosebud.ai/assets/spaceship.png.webp?6ILm';
+        const spriteUrl = shipConfig.spriteUrl || '/assets/spaceship.png.webp';
         const visualScale = shipConfig.visualScale || 64;
         
         let visual;
@@ -4532,7 +4532,7 @@ if (typeof ASTEROID_URL === "string" && ASTEROID_URL) {
         this.scene.add(this.shipFlare);
 
         // Custom Cursor Setup
-        const cursorTex = await textureLoader.loadAsync('https://rosebud.ai/assets/crosshair-aim-icon.png.webp?Qm1s');
+        const cursorTex = await textureLoader.loadAsync('/assets/crosshair-aim-icon.png.webp');
         const cursorMat = new THREE.SpriteMaterial({ map: cursorTex, transparent: true, depthTest: false });
         this.cursorSprite = new THREE.Sprite(cursorMat);
         this.cursorSprite.scale.set(40, 40, 1);
@@ -8033,14 +8033,14 @@ performUndock() {
 
         // Load specific weapon sound assets
         this.pulsePlayer = new Tone.Player({
-            url: "https://rosebud.ai/assets/pulsecannonsound.wav?aS58",
+            url: "/assets/pulsecannonsound.wav",
             autostart: false,
             fadeOut: "64n"
         }).connect(this.masterLimiter);
         this.pulsePlayer.volume.value = -10;
 
         this.fluxPlayer = new Tone.Player({
-            url: "https://rosebud.ai/assets/fluxlasersound.wav?hxVM",
+            url: "/assets/fluxlasersound.wav",
             autostart: false,
             loop: true,
             fadeOut: "32n"
@@ -8076,13 +8076,13 @@ performUndock() {
         this.battlegroundMusic.volume.value = -22;
 
         this.jumpPlayer = new Tone.Player({
-            url: "https://rosebud.ai/assets/jump.wav?jF2d",
+            url: "/assets/jump.wav",
             autostart: false
         }).connect(this.masterLimiter);
         this.jumpPlayer.volume.value = -10;
 
         this.jumpVoicePlayer = new Tone.Player({
-            url: "https://rosebud.ai/assets/jumpvoice.mp3?4B1X",
+            url: "/assets/jumpvoice.mp3",
             autostart: false
         }).connect(this.masterLimiter);
         this.jumpVoicePlayer.volume.value = -8;
@@ -13223,7 +13223,7 @@ this.backendSocket.sendTelemetry({
     }
 
     spawnBroodmother(position) {
-        const squid = new SpaceSquid(this.scene, 'https://rosebud.ai/assets/squidhd.jpg?U7BK', {
+        const squid = new SpaceSquid(this.scene, '/assets/squidhd.jpg', {
             position: position,
             size: 800 + Math.random() * 200, // Reduced from 1500
             bobSpeed: 0.015, 

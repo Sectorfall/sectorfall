@@ -6,7 +6,7 @@
 export const BIO_CREATURE_REGISTRY = {
     'Star-Eater Larva': {
         classId: 'Small Bio-Creature',
-        spriteUrl: 'https://rosebud.ai/assets/larva4x1.jpg?mAYc',
+        spriteUrl: '/assets/larva4x1.jpg',
         frames: 4,
         fps: 2,
         baseSigRadius: 25,
@@ -30,7 +30,7 @@ export const BIO_CREATURE_REGISTRY = {
     },
     'Star-Eater Broodmother': {
         classId: 'Large Bio-Creature',
-        spriteUrl: 'https://rosebud.ai/assets/squidhd.jpg?U7BK',
+        spriteUrl: '/assets/squidhd.jpg',
         frames: 8,
         tilesX: 4,
         tilesY: 5,

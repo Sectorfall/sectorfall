@@ -6,62 +6,62 @@
 
 export const ASSETS = {
   // Background
-  background: "https://rosebud.ai/assets/space-background.jpg.webp?ntpv",
+  background: "/assets/space-background.jpg.webp",
 
   // Celestial
-  sun: "https://rosebud.ai/assets/fiery-star-core.png.webp?CQyw",
-  planetRingedGold: "https://rosebud.ai/assets/planet-ringed-gold.png.webp?33fy",
+  sun: "/assets/fiery-star-core.png.webp",
+  planetRingedGold: "/assets/planet-ringed-gold.png.webp",
 
   // Nebulae
   // NOTE: `nebulaByType` is what the engine uses for color selection.
   // `nebulae` remains as a flat list for any legacy callers.
   nebulaByType: {
     blue: [
-      "https://rosebud.ai/assets/nebula-blue-v2.webp?CB9X",
-      "https://rosebud.ai/assets/nebula-blue-cloud.webp?HwHn",
+      "/assets/nebula-blue-v2.webp",
+      "/assets/nebula-blue-cloud.webp",
     ],
     gold: [
-      "https://rosebud.ai/assets/nebula-gold-v2.webp?ezfX",
-      "https://rosebud.ai/assets/nebula-gold-v3.webp?006k",
+      "/assets/nebula-gold-v2.webp",
+      "/assets/nebula-gold-v3.webp",
     ],
     purple: [
-      "https://rosebud.ai/assets/nebula-purple-cloud.webp?HG0M",
+      "/assets/nebula-purple-cloud.webp",
     ],
   },
   nebulae: [
-    "https://rosebud.ai/assets/nebula-blue-v2.webp?CB9X",
-    "https://rosebud.ai/assets/nebula-gold-v2.webp?ezfX",
-    "https://rosebud.ai/assets/nebula-gold-v3.webp?006k",
-    "https://rosebud.ai/assets/nebula-blue-cloud.webp?HwHn",
-    "https://rosebud.ai/assets/nebula-purple-cloud.webp?HG0M",
+    "/assets/nebula-blue-v2.webp",
+    "/assets/nebula-gold-v2.webp",
+    "/assets/nebula-gold-v3.webp",
+    "/assets/nebula-blue-cloud.webp",
+    "/assets/nebula-purple-cloud.webp",
   ],
 
   // POIs
-  anomaly: "https://rosebud.ai/assets/cosmic-anomaly-poi.webp?qwAP",
-  warpGateRing: "https://rosebud.ai/assets/warp-gate-ring.webp.webp?X1Hc",
+  anomaly: "/assets/cosmic-anomaly-poi.webp",
+  warpGateRing: "/assets/warp-gate-ring.webp.webp",
 
   // Stations (interiors)
-  starportHangar: "https://rosebud.ai/assets/massive-starport-hangar.webp.webp?UBdB",
-  starportInteriorDollhouse: "https://rosebud.ai/assets/starport-interior-dollhouse.png.webp?vicq",
+  starportHangar: "/assets/massive-starport-hangar.webp.webp",
+  starportInteriorDollhouse: "/assets/starport-interior-dollhouse.png.webp",
 
   // Asteroid
-  asteroid: "https://rosebud.ai/assets/asteroid-01.png.webp?iIxE",
+  asteroid: "/assets/asteroid-01.png.webp",
 
   // Weapon textures
   weapons: {
-    whiteflux: "https://rosebud.ai/assets/whiteflux.png?cAKq",
+    whiteflux: "/assets/whiteflux.png",
   },
 
   // Lens flares
-  flareGhostRing: "https://rosebud.ai/assets/flare-ghost-ring.webp?qQ3W",
-  flareGhostHex: "https://rosebud.ai/assets/flare-ghost-hex.webp?6rbE",
+  flareGhostRing: "/assets/flare-ghost-ring.webp",
+  flareGhostHex: "/assets/flare-ghost-hex.webp",
 };
 
 export const AUDIO_URLS = {
-  backgroundMusic: "https://rosebud.ai/assets/background.wav?HAL8",
-  welcomeCygnus: "https://rosebud.ai/assets/welcometocygnus.mp3?7tSS",
-  arenaMusic: "https://rosebud.ai/assets/Arena.mp3?6wcH",
-  battlegroundMusic: "https://rosebud.ai/assets/Arena.mp3?6wcH",
+  backgroundMusic: "/assets/background.wav",
+  welcomeCygnus: "/assets/welcometocygnus.mp3",
+  arenaMusic: "/assets/Arena.mp3",
+  battlegroundMusic: "/assets/Arena.mp3",
 };
 
 // Compatibility named exports
@@ -83,13 +83,13 @@ export const FLARE_URLS = {
 
 // --- STARPORTS (multi-faction support) ---
 export const STARPORT_URL = {
-  omni: "https://rosebud.ai/assets/federation-starport-station.webp?aZ5h",
-  cartel: "https://rosebud.ai/assets/cbase.png?WFmT",
-  industrial: "https://rosebud.ai/assets/starportindust.png?r7K5",
+  omni: "/assets/federation-starport-station.webp",
+  cartel: "/assets/cbase.png",
+  industrial: "/assets/starportindust.png",
 };
 export const NEBULA_LIST = ASSETS.nebulae;
 
 export const STRUCTURE_URLS = {
-  arenaBeacon: "https://rosebud.ai/assets/omniportal2.png?qKiO",
-  battlegroundBeacon: "https://rosebud.ai/assets/omniportal2.png?qKiO",
+  arenaBeacon: "/assets/omniportal2.png",
+  battlegroundBeacon: "/assets/omniportal2.png",
 };

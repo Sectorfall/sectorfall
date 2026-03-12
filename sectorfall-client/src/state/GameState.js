@@ -53,7 +53,7 @@ export const GameStateProvider = ({ children }) => {
                 console.log(`[GameState] [PORTRAIT] Existing mapping found: ID ${mapping.portrait_id}`);
             }
 
-            let portraitUrl = 'https://rosebud.ai/assets/captain-portrait.png.webp?eV4E';
+            let portraitUrl = '/assets/captain-portrait.png.webp';
 
             // 3. Fetch the actual image URL for the assigned portrait_id
             if (mapping?.portrait_id) {

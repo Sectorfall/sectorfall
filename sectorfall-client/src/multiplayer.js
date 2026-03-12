@@ -180,7 +180,7 @@ function sendLocalUpdate() {
         payload: {
             player_id: localPlayerId,
             name: game.commanderName || "COMMANDER",
-            portrait_url: game.portraitUrl || 'https://rosebud.ai/assets/captain-portrait.png.webp?eV4E',
+            portrait_url: game.portraitUrl || '/assets/captain-portrait.png.webp',
             ship_type: game.ship.type,
             x: game.player.x,
             y: game.player.y,
@@ -206,7 +206,7 @@ function sendShipUpdate() {
             system_id: game.currentSystemId,
             ship_type: game.ship.type,
             name: game.commanderName || "COMMANDER",
-            portrait_url: game.portraitUrl || 'https://rosebud.ai/assets/captain-portrait.png.webp?eV4E',
+            portrait_url: game.portraitUrl || '/assets/captain-portrait.png.webp',
             x: game.ship.sprite.position.x,
             y: game.ship.sprite.position.y,
             rot: game.ship.rotation,

@@ -2750,7 +2750,7 @@ const CommanderMenu = ({ gameState, onClose, isEditing, onToggleEdit, onSaveName
                 }
             },
                 React.createElement('img', {
-                    src: commanderData?.portrait_url || 'https://rosebud.ai/assets/captain-portrait.png.webp?eV4E',
+                    src: commanderData?.portrait_url || '/assets/captain-portrait.png.webp',
                     onClick: () => setActivePanel("portraitPicker"),
                     style: { width: '100%', height: '100%', objectFit: 'cover', imageRendering: 'pixelated', cursor: 'pointer' }
                 })
@@ -6709,7 +6709,7 @@ const StationInterior = ({
                 position: 'absolute',
                 width: '110%', // Larger for pan effect
                 height: '110%',
-                backgroundImage: `url(${view === 'hangar' ? 'https://rosebud.ai/assets/massive-starport-hangar.webp.webp?UBdB' : 'https://rosebud.ai/assets/starport-interior-dollhouse.png.webp?vicq'})`,
+                backgroundImage: `url(${view === 'hangar' ? '/assets/massive-starport-hangar.webp.webp' : '/assets/starport-interior-dollhouse.png.webp'})`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 opacity: 0.95,
@@ -6978,7 +6978,7 @@ const StationInterior = ({
                                     }
                                 }, 
                                     React.createElement('img', {
-                                        src: shipConfig?.spriteUrl || 'https://rosebud.ai/assets/spaceship.png.webp?6ILm',
+                                        src: shipConfig?.spriteUrl || '/assets/spaceship.png.webp',
                                         style: { 
                                             width: `${40 * (shipConfig?.uiScale || 1.0)}px`, 
                                             transform: 'rotate(-45deg)', 
@@ -7327,7 +7327,7 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
     
     const activeShip = gameState.ownedShips.find(s => s.id === gameState.activeShipId);
     const shipConfig = SHIP_REGISTRY[activeShip?.type];
-    const spriteUrl = shipConfig?.spriteUrl || 'https://rosebud.ai/assets/spaceship.png.webp?6ILm';
+    const spriteUrl = shipConfig?.spriteUrl || '/assets/spaceship.png.webp';
 
     const slots = [
         { id: 'weapon1', type: 'weapon', label: 'W1', position: { x: '25%', y: '12%' } },
@@ -12506,7 +12506,7 @@ backendSocket.sendUndock(
                 }
             },
                 React.createElement('img', {
-                    src: commanderData?.portrait_url || 'https://rosebud.ai/assets/captain-portrait.png.webp?eV4E',
+                    src: commanderData?.portrait_url || '/assets/captain-portrait.png.webp',
                     style: {
                         width: '100%',
                         height: '100%',

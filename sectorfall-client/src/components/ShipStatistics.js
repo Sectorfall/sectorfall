@@ -450,7 +450,7 @@ export const ShipStatistics = ({ ship, fittings, title = "TECHNICAL TELEMETRY", 
                     }
                 }),
                 React.createElement('img', {
-                    src: shipConfig?.spriteUrl || 'https://rosebud.ai/assets/spaceship.png.webp?6ILm',
+                    src: shipConfig?.spriteUrl || '/assets/spaceship.png.webp',
                     style: { 
                         width: `${100 * (shipConfig?.uiScale || 1.0)}px`, 
                         transform: 'rotate(-45deg)', 
