@@ -974,37 +974,6 @@ const BattlegroundBlackoutOverlay = ({ active, opaque }) => {
     });
 };
 
-const SpaceTransitionOverlay = ({ active, label = 'TRANSIT' }) => {
-    if (!active) return null;
-    return React.createElement('div', {
-        style: {
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            background: '#000',
-            zIndex: 10005,
-            pointerEvents: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontFamily: 'monospace',
-            letterSpacing: '4px',
-            color: '#d7ecff',
-            textShadow: '0 0 18px rgba(255,255,255,0.25)'
-        }
-    },
-        React.createElement('div', {
-            style: {
-                fontSize: '26px',
-                fontWeight: 'bold',
-                opacity: 0.92
-            }
-        }, String(label || 'TRANSIT').toUpperCase())
-    );
-};
-
 const CLUSTER_GALAXY_POSITIONS = {
     alpha: { x: -240, y: -120 },
     beta: { x: 20, y: -220 },
@@ -7108,7 +7077,7 @@ const StationInterior = ({
                                         boxSizing: 'border-box'
                                     }
                                 }, 'IN CONTROL') : (
-                                    isInHangar ? React.createElement('button', {
+                                    isInHangar ? null /* activation handled from right-side selected ship panel */ : React.createElement('button', {
                                         onClick: (e) => { e.stopPropagation(); onActivateShip(ship); },
                                         style: {
                                             padding: '8px 16px',
@@ -7203,8 +7172,11 @@ const StationInterior = ({
                         React.createElement('div', { style: { display: 'flex', gap: '10px', marginTop: '10px' } },
                             React.createElement('button', {
                                 onClick: () => {
-                                    if (selectedShip.id !== gameState.activeShipId) onCommandShip(selectedShip.id);
-                                    onOpenFitting();
+                                    if (selectedShip.id === gameState.activeShipId) {
+                                        onOpenFitting();
+                                        return;
+                                    }
+                                    onActivateShip(selectedShip);
                                 },
                                 style: {
                                     flex: 1,
@@ -7222,7 +7194,7 @@ const StationInterior = ({
                                 },
                                 onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; e.target.style.boxShadow = '0 0 25px rgba(255,204,0,0.3)'; },
                                 onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; e.target.style.boxShadow = '0 0 15px rgba(255,204,0,0.1)'; }
-                            }, 'ACCESS SHIP FITTING'),
+                            }, selectedShip.id === gameState.activeShipId ? 'ACCESS SHIP FITTING' : 'ACTIVATE'),
 
                             // Repair Button inside stats pane
                             selectedShip.hp < (SHIP_REGISTRY[selectedShip.type]?.hp || 0) && React.createElement('button', {
@@ -7589,8 +7561,13 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
                                             return sum + (fs.baseExtraction * (60 / fs.fireRate));
                                         }, 0);
 
-                                    const avgRes = (gameState.kineticRes + gameState.thermalRes + gameState.blastRes) / 3;
-                                    const ehp = (gameState.hp + gameState.shields) / Math.max(0.01, 1 - avgRes);
+                                    const kineticRes = Number.isFinite(gameState.kineticRes) ? gameState.kineticRes : 0;
+                                    const thermalRes = Number.isFinite(gameState.thermalRes) ? gameState.thermalRes : 0;
+                                    const blastRes = Number.isFinite(gameState.blastRes) ? gameState.blastRes : 0;
+                                    const avgRes = (kineticRes + thermalRes + blastRes) / 3;
+                                    const hpForEhp = Number.isFinite(gameState.maxHp) ? gameState.maxHp : (Number.isFinite(gameState.hp) ? gameState.hp : 0);
+                                    const shieldsForEhp = Number.isFinite(gameState.maxShields) ? gameState.maxShields : (Number.isFinite(gameState.shields) ? gameState.shields : 0);
+                                    const ehp = (hpForEhp + shieldsForEhp) / Math.max(0.01, 1 - avgRes);
                                     
                                     const thrusterBoost = Object.values(gameState.fittings)
                                         .filter(f => f && f.type === 'thruster')
@@ -8337,41 +8314,12 @@ const ChatWindow = ({ messages, onSendMessage, currentChannel, onSetChannel, sys
     );
 };
 
-const SAFE_DEFAULT_FITTINGS = {};
-
-const getAuthoritativeShipFittingSchema = (shipLike = null) => {
-    const rawType = String(
-        shipLike?.type ||
-        shipLike?.shipId ||
-        shipLike?.ship_id ||
-        shipLike?.hull_id ||
-        shipLike?.hullTemplateId ||
-        ''
-    ).trim();
-    const resolvedShipId = resolveShipId(rawType) || rawType;
-    const resolvedKey = resolveShipRegistryKey(resolvedShipId) || resolveShipRegistryKey(rawType) || resolvedShipId || rawType;
-    const config = SHIP_REGISTRY[resolvedKey] || SHIP_REGISTRY[resolvedShipId] || SHIP_REGISTRY[rawType] || null;
-    const schema = (config?.fittings && typeof config.fittings === 'object' && !Array.isArray(config.fittings)) ? config.fittings : null;
-    if (!schema) return {};
-    return Object.keys(schema).reduce((acc, slotId) => {
-        acc[slotId] = null;
-        return acc;
-    }, {});
-};
-
-const mergeFittingsIntoSchema = (schema = {}, ...candidates) => {
-    const next = { ...(schema || {}) };
-    const allowedSlotIds = Object.keys(next);
-    if (allowedSlotIds.length === 0) return {};
-    for (const candidate of candidates) {
-        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
-        for (const slotId of allowedSlotIds) {
-            if (Object.prototype.hasOwnProperty.call(candidate, slotId)) {
-                next[slotId] = candidate[slotId] == null ? null : hydrateFittedModule(candidate[slotId]);
-            }
-        }
-    }
-    return next;
+const SAFE_DEFAULT_FITTINGS = {
+    weapon1: null, weapon2: null, weapon3: null,
+    active1: null, active2: null, active3: null, active4: null,
+    passive1: null, passive2: null, passive3: null, passive4: null,
+    rig1: null, rig2: null, rig3: null, rig4: null,
+    synapse1: null, synapse2: null, synapse3: null
 };
 
 /**
@@ -8691,7 +8639,6 @@ const handleEnterArena = () => {
     const [notifications, setNotifications] = useState([]);
     const lastNotificationTimeRef = useRef(0);
     const [isDocked, setIsDocked] = useState(true);
-    const [spaceTransitionOverlay, setSpaceTransitionOverlay] = useState({ active: false, label: '' });
     const [showStarMap, setShowStarMap] = useState(false);
     const [initialStarMapView, setInitialStarMapView] = useState('sector');
     const [isLeapMode, setIsLeapMode] = useState(false);
@@ -9300,16 +9247,12 @@ useEffect(() => {
 
 useEffect(() => {
     const sanitizeAuthoritativeFittings = (...candidates) => {
-        const activeShip = gameState?.ownedShips?.find?.((ship) => ship?.id === gameState?.activeShipId) || null;
-        const schemaFromActiveShip = getAuthoritativeShipFittingSchema(activeShip);
-        const schemaFromCombatStats = getAuthoritativeShipFittingSchema({
-            type: gameManagerRef.current?.stats?.combatStats?.shipId || gameManagerRef.current?.ship?.combatStats?.shipId || null
-        });
-        const fallbackSchema = Object.keys(schemaFromActiveShip).length > 0
-            ? schemaFromActiveShip
-            : (Object.keys(schemaFromCombatStats).length > 0 ? schemaFromCombatStats : {});
-
-        return mergeFittingsIntoSchema(fallbackSchema, ...candidates);
+        for (const candidate of candidates) {
+            if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+                return candidate;
+            }
+        }
+        return {};
     };
 
     const onAuthoritativeShipState = (event) => {
@@ -9943,7 +9886,6 @@ let targetSystemId = STARPORT_TO_SYSTEM[lastStationId] || 'cygnus-prime';
                 console.log("[Dock][Client] GameManager dock callback", { docked, starportId });
 
                 if (docked) {
-                    setSpaceTransitionOverlay({ active: true, label: 'DOCKING' });
                     try {
                         const liveTelemetry = gameManagerRef.current?.getTelemetry?.() || null;
                         const snapshotTelemetry = gameManagerRef.current?.lastSpaceTelemetry || null;
@@ -10048,7 +9990,6 @@ setLocalPlayerSpawn: function (x, y, rot) {
   // If we were hiding the ship until authoritative spawn, unhide now.
   try { if (s.sprite) s.sprite.visible = true; } catch (e) {}
   gm._hideShipUntilSpawn = false;
-  try { setSpaceTransitionOverlay({ active: false, label: '' }); } catch (e) {}
 
   // Normalize rotation
   rot = (typeof rot === "number") ? rot : 0;
@@ -10106,7 +10047,6 @@ showStarportUI: function (starportId) {
 
   // UI only here. DOCK is sent from the actual docking interaction path.
   setIsDocked(true);
-  setSpaceTransitionOverlay({ active: false, label: '' });
   gameManager.setDocked(true);
 },
 
@@ -12030,7 +11970,6 @@ if (gameState.shipName === "PENDING" || gameState.activeShipId === "PENDING") {
     }
 
     // 🚀 SEND UNDOCK TO SERVER
-    setSpaceTransitionOverlay({ active: true, label: 'UNDOCKING' });
 // Prevent a 0,0 / starport-exit frame before the server's WELCOME arrives
 backendSocket.awaitingSpawn = true;
 try { if (gameManagerRef.current?.ship?.sprite) gameManagerRef.current.ship.sprite.visible = false; } catch (e) {}
@@ -13420,7 +13359,6 @@ backendSocket.sendUndock(
         battlegroundExtractState && React.createElement(BattlegroundCompleteOverlay, { state: battlegroundExtractState }),
         battlegroundFailState && React.createElement(BattlegroundFailOverlay, { state: battlegroundFailState, onRespawn: handleBattlegroundFailRespawn }),
         React.createElement(BattlegroundBlackoutOverlay, battlegroundRespawnFade),
-        React.createElement(SpaceTransitionOverlay, spaceTransitionOverlay),
         isShipDestroyed && React.createElement(ShipDestroyedOverlay, { 
             summary: destructionSummary, 
             onRespawn: handleRespawn 

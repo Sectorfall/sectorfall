@@ -205,16 +205,19 @@ export const aggregateShipStats = (ship, fittings) => {
     const authoritativeRes = (ship.resistances && typeof ship.resistances === 'object')
         ? ship.resistances
         : ((combatStats.resistances && typeof combatStats.resistances === 'object') ? combatStats.resistances : {});
-    const baseShipHP = typeof ship.hp === 'number'
-        ? ship.hp
-        : getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.maxHp === 'number' ? ship.maxHp : 0);
+    const baseShipHP = typeof ship.maxHp === 'number'
+        ? ship.maxHp
+        : getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.hp === 'number' ? ship.hp : 0);
     const finalHP = baseShipHP * (1 + hpBonus);
-    const finalKinRes = (typeof ship.kineticRes === 'number' ? ship.kineticRes : Number(authoritativeRes.kinetic || 0)) + kinResBonus;
-    const finalThermRes = (typeof ship.thermalRes === 'number' ? ship.thermalRes : Number(authoritativeRes.thermal || 0)) + thermResBonus;
-    const finalBlastRes = (typeof ship.blastRes === 'number' ? ship.blastRes : Number(authoritativeRes.blast || 0)) + blastResBonus;
+    const shieldCapacity = typeof ship.maxShields === 'number'
+        ? ship.maxShields
+        : getAuthoritativeNumber(combatStats, ['maxShields', 'shieldCapacity'], typeof ship.shields === 'number' ? ship.shields : 0);
+    const finalKinRes = (typeof ship.kineticRes === 'number' ? ship.kineticRes : Number(authoritativeRes.kinetic ?? 0)) + kinResBonus;
+    const finalThermRes = (typeof ship.thermalRes === 'number' ? ship.thermalRes : Number(authoritativeRes.thermal ?? 0)) + thermResBonus;
+    const finalBlastRes = (typeof ship.blastRes === 'number' ? ship.blastRes : Number(authoritativeRes.blast ?? 0)) + blastResBonus;
 
     const avgRes = (finalKinRes + finalThermRes + finalBlastRes) / 3;
-    const ehp = (finalHP + (ship.maxShields || 0)) / Math.max(0.01, 1 - avgRes);
+    const ehp = (finalHP + shieldCapacity) / Math.max(0.01, 1 - avgRes);
 
     // Shield restoration stats (aggregated from fittings)
     const baseShieldRegen = Object.values(shipFittings).reduce((sum, m) => sum + (m?.type === 'shield' ? (m.rechargeRate || 0) : 0), 0);
