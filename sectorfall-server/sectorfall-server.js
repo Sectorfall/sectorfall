@@ -3650,7 +3650,10 @@ async function hydratePlayerFromCommanderActiveShip(player, { fillVitals = false
   if (!activeShipId) return null;
 
   const previousRuntimeShipInstanceId = String(player?.active_ship_instance_id || player?.current_ship_instance_id || '').trim();
-  const hangarShipRecord = await loadHangarShipRecordById(player.userId, activeShipId);
+  let hangarShipRecord = await loadHangarShipRecordById(player.userId, activeShipId);
+  if (!hangarShipRecord?.ship_config) {
+    hangarShipRecord = await ensureHangarShipRecord(player, activeShipId);
+  }
   const hangarShipConfig = hangarShipRecord?.ship_config && typeof hangarShipRecord.ship_config === 'object' ? hangarShipRecord.ship_config : null;
   if (!hangarShipConfig) return null;
 
@@ -4343,12 +4346,129 @@ function buildOwnedShipEntryFromHangarRow(row) {
   };
 }
 
+async function ensureHangarShipRecord(player, shipInstanceId, vitalsOverride = null) {
+  if (!player?.userId) return null;
+  const normalizedShipInstanceId = String(shipInstanceId || '').trim();
+  if (!normalizedShipInstanceId) return null;
+
+  const existingRow = await loadHangarShipRecordById(player.userId, normalizedShipInstanceId);
+  if (existingRow?.ship_config && typeof existingRow.ship_config === 'object') return existingRow;
+
+  let persistedState = null;
+  try {
+    persistedState = await loadShipState(player.userId);
+  } catch (e) {
+    console.warn('[Backend] Failed to load ship state while ensuring hangar row:', player.userId, normalizedShipInstanceId, e?.message || e);
+  }
+
+  const runtimeShipType = normalizeCanonicalShipId(
+    vitalsOverride?.hull_id
+    || player.ship_type
+    || persistedState?.ship_type
+    || persistedState?.shipType
+    || null
+  );
+
+  const contentShip = runtimeShipType ? getShipContentByAnyId(runtimeShipType) : null;
+  const canonicalHullId = normalizeCanonicalShipId(
+    runtimeShipType
+    || contentShip?.ship_id
+    || contentShip?.display_name
+    || null
+  );
+  if (!canonicalHullId) {
+    console.warn('[Backend] Cannot ensure hangar row without canonical hull id:', player.userId, normalizedShipInstanceId);
+    return null;
+  }
+
+  const baseMaxHp = Math.max(1, finiteNum(contentShip?.hull_base, finiteNum(player.maxHp, finiteNum(persistedState?.maxHp, 1))));
+  const baseMaxShields = Math.max(0, finiteNum(contentShip?.shields_base, finiteNum(player.maxShields, finiteNum(persistedState?.maxShields, 0))));
+  const baseMaxEnergy = Math.max(0, finiteNum(contentShip?.energy_base, finiteNum(player.maxEnergy, finiteNum(persistedState?.maxEnergy, 0))));
+
+  const nextHp = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'hp')
+    ? vitalsOverride.hp
+    : finiteNum(player.hp, finiteNum(persistedState?.hull, baseMaxHp));
+  const nextMaxHp = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'maxHp')
+    ? vitalsOverride.maxHp
+    : finiteNum(player.maxHp, finiteNum(persistedState?.maxHp, baseMaxHp));
+  const nextShields = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'shields')
+    ? vitalsOverride.shields
+    : finiteNum(player.shields, finiteNum(persistedState?.shields, baseMaxShields));
+  const nextMaxShields = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'maxShields')
+    ? vitalsOverride.maxShields
+    : finiteNum(player.maxShields, finiteNum(persistedState?.maxShields, baseMaxShields));
+  const nextEnergy = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'energy')
+    ? vitalsOverride.energy
+    : finiteNum(player.energy, finiteNum(persistedState?.energy, baseMaxEnergy));
+  const nextMaxEnergy = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'maxEnergy')
+    ? vitalsOverride.maxEnergy
+    : finiteNum(player.maxEnergy, finiteNum(persistedState?.maxEnergy, baseMaxEnergy));
+  const nextFittings = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'fittings')
+    ? vitalsOverride.fittings
+    : (player.fittings || persistedState?.fittings || {});
+
+  const fallbackStarportId = normalizeStarportId(
+    player.starport_id
+    || persistedState?.starport_id
+    || 'cygnus_prime_starport'
+  );
+
+  const shipConfig = {
+    id: normalizedShipInstanceId,
+    ship_id: canonicalHullId,
+    ship_type: canonicalHullId,
+    type: canonicalHullId,
+    hull_id: canonicalHullId,
+    hullTemplateId: canonicalHullId,
+    hp: Math.max(0, Math.min(finiteNum(nextHp, nextMaxHp), Math.max(1, finiteNum(nextMaxHp, baseMaxHp)))),
+    maxHp: Math.max(1, finiteNum(nextMaxHp, baseMaxHp)),
+    shields: Math.max(0, Math.min(finiteNum(nextShields, nextMaxShields), Math.max(0, finiteNum(nextMaxShields, baseMaxShields)))),
+    maxShields: Math.max(0, finiteNum(nextMaxShields, baseMaxShields)),
+    energy: Math.max(0, Math.min(finiteNum(nextEnergy, nextMaxEnergy), Math.max(0, finiteNum(nextMaxEnergy, baseMaxEnergy)))),
+    maxEnergy: Math.max(0, finiteNum(nextMaxEnergy, baseMaxEnergy)),
+    fittings: sanitizeRuntimeFittings(nextFittings || {})
+  };
+
+  if (player.visual_config && typeof player.visual_config === 'object' && !Array.isArray(player.visual_config)) {
+    shipConfig.visual_config = player.visual_config;
+  }
+
+  const payload = {
+    player_id: player.userId,
+    starport_id: fallbackStarportId,
+    ship_id: normalizedShipInstanceId,
+    hull_id: canonicalHullId,
+    ship_config: shipConfig,
+    updated_at: nowIso()
+  };
+
+  const { error: insertError } = await supabase
+    .from('hangar_states')
+    .insert(payload);
+
+  if (insertError) {
+    console.warn('[Backend] Failed to create missing hangar_states row:', player.userId, normalizedShipInstanceId, insertError.message);
+  } else {
+    console.log('[Backend] Created missing hangar_states row for active ship:', {
+      userId: player.userId,
+      shipInstanceId: normalizedShipInstanceId,
+      hullId: canonicalHullId,
+      starportId: fallbackStarportId
+    });
+  }
+
+  return await loadHangarShipRecordById(player.userId, normalizedShipInstanceId);
+}
+
 async function persistShipInstanceToHangar(player, shipInstanceId, vitalsOverride = null) {
   if (!player?.userId) return false;
   const normalizedShipInstanceId = String(shipInstanceId || '').trim();
   if (!normalizedShipInstanceId) return false;
   try {
-    const hangarRow = await loadHangarShipRecordById(player.userId, normalizedShipInstanceId);
+    let hangarRow = await loadHangarShipRecordById(player.userId, normalizedShipInstanceId);
+    if (!hangarRow?.ship_config) {
+      hangarRow = await ensureHangarShipRecord(player, normalizedShipInstanceId, vitalsOverride);
+    }
     if (!hangarRow?.ship_config) return false;
 
     const nextHp = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'hp') ? vitalsOverride.hp : player.hp;
