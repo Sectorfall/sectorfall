@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARC Space Flight</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #root { width: 100vw; height: 100vh; }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom": "https://esm.sh/react-dom@18.2.0",
+            "three": "https://esm.sh/three@0.160.0",
+            "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/",
+            "tone": "https://esm.sh/tone@14.7.77",
+            "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>
