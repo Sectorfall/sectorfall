@@ -2277,7 +2277,15 @@ const ActionButton = ({ module, slotId, cooldown, active, weaponState, onTrigger
         if (!module) return React.createElement(IconWeaponPlaceholder, { color: '#555', opacity: 0.3 });
         if (slotId.startsWith('engine')) return React.createElement(IconEngine, { color: color });
         if (slotId.startsWith('active')) return React.createElement(IconShieldSlot, { color: color });
-        if (module.name.toLowerCase().includes('laser')) {
+        const moduleName = String(
+            module?.name ||
+            module?.displayName ||
+            module?.display_name ||
+            module?.module_id ||
+            module?.item_id ||
+            ''
+        ).toLowerCase();
+        if (moduleName.includes('laser')) {
             return React.createElement(IconWeaponLaser, { color: color });
         }
         return React.createElement(IconWeaponPlaceholder, { color: color, opacity: 1 });
@@ -2294,7 +2302,15 @@ const ActionButton = ({ module, slotId, cooldown, active, weaponState, onTrigger
     // Cooldown Normalization for Seeker Pods and standard weapons
     let cooldownPercent = 0;
     let showTimer = false;
-    const isMissile = effectiveModule?.name?.toLowerCase().includes('seeker pod');
+    const effectiveModuleName = String(
+        effectiveModule?.name ||
+        effectiveModule?.displayName ||
+        effectiveModule?.display_name ||
+        effectiveModule?.module_id ||
+        effectiveModule?.item_id ||
+        ''
+    ).toLowerCase();
+    const isMissile = effectiveModuleName.includes('seeker pod');
     if (cooldown > 0) {
         let maxCooldown = 1.0; // Default fallback
         if (isMissile) {
@@ -10893,74 +10909,29 @@ showStarportUI: function (starportId) {
 
     const handleShipActivationTransaction = async (ship) => {
         if (!isDocked || !cloudUser) {
-            console.warn('[Commander][Activate][Client] blocked: player not docked or missing cloud user', {
-                isDocked,
-                hasCloudUser: Boolean(cloudUser),
-                ship
-            });
             showNotification("ACTIVATE FAILED: VESSEL MUST BE DOCKED AT STARPORT", "error");
             return;
         }
 
         if (!backendSocket?.requestActivateShip) {
-            console.warn('[Commander][Activate][Client] blocked: backendSocket.requestActivateShip unavailable', {
-                hasBackendSocket: Boolean(backendSocket),
-                backendSocketKeys: backendSocket ? Object.keys(backendSocket).slice(0, 20) : []
-            });
             showNotification("ACTIVATE FAILED: BACKEND COMMAND UNAVAILABLE", "error");
             return;
         }
 
-        const activationCandidates = {
-            id: ship?.id ?? null,
-            shipId: ship?.shipId ?? null,
-            ship_id: ship?.ship_id ?? null,
-            shipInstanceId: ship?.shipInstanceId ?? null,
-            instanceId: ship?.instanceId ?? null,
-            ship_instance_id: ship?.ship_instance_id ?? null,
-            type: ship?.type ?? null,
-            hullId: ship?.hullId ?? null,
-            hull_id: ship?.hull_id ?? null,
-            name: ship?.name ?? null
-        };
-
         const shipId = String(ship?.id || '').trim();
-        console.log('[Commander][Activate][Client] request start', {
-            chosenShipId: shipId,
-            activeShipId: gameState.activeShipId || null,
-            isDocked,
-            currentSystemId: gameState?.currentSystem?.id || null,
-            currentStarportId: SYSTEM_TO_STARPORT[gameState?.currentSystem?.id] || null,
-            activationCandidates,
-            ship
-        });
-
         if (!shipId) {
-            console.warn('[Commander][Activate][Client] invalid ship id resolved from payload', { activationCandidates, ship });
             showNotification("ACTIVATE FAILED: INVALID SHIP", "error");
             return;
         }
 
         if (shipId === gameState.activeShipId) {
-            console.log('[Commander][Activate][Client] skipped: ship already active', { shipId, activeShipId: gameState.activeShipId || null });
             showNotification(`${ship.name || 'Ship'} already current.`, "info");
             return;
         }
 
         try {
             const result = await backendSocket.requestActivateShip({ shipId });
-            console.log('[Commander][Activate][Client] backend result', {
-                requestShipId: shipId,
-                result,
-                activationCandidates
-            });
             if (!result?.ok) {
-                console.warn('[Commander][Activate][Client] backend rejected activation', {
-                    requestShipId: shipId,
-                    error: result?.error || 'backend_rejected',
-                    result,
-                    activationCandidates
-                });
                 showNotification(`ACTIVATE FAILED: ${String(result?.error || 'backend_rejected').replace(/_/g, ' ').toUpperCase()}`, "error");
                 return;
             }
