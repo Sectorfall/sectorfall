@@ -2277,7 +2277,9 @@ const ActionButton = ({ module, slotId, cooldown, active, weaponState, onTrigger
         if (!module) return React.createElement(IconWeaponPlaceholder, { color: '#555', opacity: 0.3 });
         if (slotId.startsWith('engine')) return React.createElement(IconEngine, { color: color });
         if (slotId.startsWith('active')) return React.createElement(IconShieldSlot, { color: color });
-        if (module.name.toLowerCase().includes('laser')) {
+        const rawModuleName = module?.name || module?.displayName || module?.display_name || module?.module_id || module?.item_id || '';
+        const moduleNameLower = String(rawModuleName).toLowerCase();
+        if (moduleNameLower.includes('laser')) {
             return React.createElement(IconWeaponLaser, { color: color });
         }
         return React.createElement(IconWeaponPlaceholder, { color: color, opacity: 1 });
@@ -2294,7 +2296,8 @@ const ActionButton = ({ module, slotId, cooldown, active, weaponState, onTrigger
     // Cooldown Normalization for Seeker Pods and standard weapons
     let cooldownPercent = 0;
     let showTimer = false;
-    const isMissile = effectiveModule?.name?.toLowerCase().includes('seeker pod');
+    const effectiveModuleName = String(effectiveModule?.name || effectiveModule?.displayName || effectiveModule?.display_name || effectiveModule?.module_id || effectiveModule?.item_id || '').toLowerCase();
+    const isMissile = effectiveModuleName.includes('seeker pod');
     if (cooldown > 0) {
         let maxCooldown = 1.0; // Default fallback
         if (isMissile) {
@@ -8303,12 +8306,41 @@ const ChatWindow = ({ messages, onSendMessage, currentChannel, onSetChannel, sys
     );
 };
 
-const SAFE_DEFAULT_FITTINGS = {
-    weapon1: null, weapon2: null, weapon3: null,
-    active1: null, active2: null, active3: null, active4: null,
-    passive1: null, passive2: null, passive3: null, passive4: null,
-    rig1: null, rig2: null, rig3: null, rig4: null,
-    synapse1: null, synapse2: null, synapse3: null
+const SAFE_DEFAULT_FITTINGS = {};
+
+const getAuthoritativeShipFittingSchema = (shipLike = null) => {
+    const rawType = String(
+        shipLike?.type ||
+        shipLike?.shipId ||
+        shipLike?.ship_id ||
+        shipLike?.hull_id ||
+        shipLike?.hullTemplateId ||
+        ''
+    ).trim();
+    const resolvedShipId = resolveShipId(rawType) || rawType;
+    const resolvedKey = resolveShipRegistryKey(resolvedShipId) || resolveShipRegistryKey(rawType) || resolvedShipId || rawType;
+    const config = SHIP_REGISTRY[resolvedKey] || SHIP_REGISTRY[resolvedShipId] || SHIP_REGISTRY[rawType] || null;
+    const schema = (config?.fittings && typeof config.fittings === 'object' && !Array.isArray(config.fittings)) ? config.fittings : null;
+    if (!schema) return {};
+    return Object.keys(schema).reduce((acc, slotId) => {
+        acc[slotId] = null;
+        return acc;
+    }, {});
+};
+
+const mergeFittingsIntoSchema = (schema = {}, ...candidates) => {
+    const next = { ...(schema || {}) };
+    const allowedSlotIds = Object.keys(next);
+    if (allowedSlotIds.length === 0) return {};
+    for (const candidate of candidates) {
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+        for (const slotId of allowedSlotIds) {
+            if (Object.prototype.hasOwnProperty.call(candidate, slotId)) {
+                next[slotId] = candidate[slotId] == null ? null : hydrateFittedModule(candidate[slotId]);
+            }
+        }
+    }
+    return next;
 };
 
 /**
@@ -9236,12 +9268,16 @@ useEffect(() => {
 
 useEffect(() => {
     const sanitizeAuthoritativeFittings = (...candidates) => {
-        for (const candidate of candidates) {
-            if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-                return candidate;
-            }
-        }
-        return {};
+        const activeShip = gameState?.ownedShips?.find?.((ship) => ship?.id === gameState?.activeShipId) || null;
+        const schemaFromActiveShip = getAuthoritativeShipFittingSchema(activeShip);
+        const schemaFromCombatStats = getAuthoritativeShipFittingSchema({
+            type: gameManagerRef.current?.stats?.combatStats?.shipId || gameManagerRef.current?.ship?.combatStats?.shipId || null
+        });
+        const fallbackSchema = Object.keys(schemaFromActiveShip).length > 0
+            ? schemaFromActiveShip
+            : (Object.keys(schemaFromCombatStats).length > 0 ? schemaFromCombatStats : {});
+
+        return mergeFittingsIntoSchema(fallbackSchema, ...candidates);
     };
 
     const onAuthoritativeShipState = (event) => {
@@ -11222,25 +11258,6 @@ showStarportUI: function (starportId) {
                 gameManagerRef.current.ship.sprite.position.set(0, 0, 0);
                 gameManagerRef.current.ship.velocity.set(0, 0);
             }
-        }
-
-        // Re-establish authoritative backend dock state after respawn.
-        try {
-            if (window.backendSocket?.sendDock && homeStarport) {
-                const snapshotTelemetry = gameManagerRef.current?.lastSpaceTelemetry || null;
-                console.log('[Respawn][Client] sending authoritative dock after respawn', {
-                    homeStarport,
-                    snapshotTelemetry
-                });
-                window.backendSocket.sendDock(homeStarport, snapshotTelemetry);
-            } else {
-                console.warn('[Respawn][Client] unable to send authoritative dock after respawn', {
-                    hasSendDock: !!window.backendSocket?.sendDock,
-                    homeStarport
-                });
-            }
-        } catch (e) {
-            console.warn('[Respawn][Client] sendDock after respawn failed:', e);
         }
         
         setIsDocked(true);
