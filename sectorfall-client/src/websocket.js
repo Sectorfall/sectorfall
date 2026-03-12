@@ -2223,6 +2223,28 @@ handleMarketActionResult(data) {
     }
   }
 
+  handleCommanderActivateResult(data) {
+    try {
+      const requestId = data?.requestId;
+      if (requestId) {
+        const pending = this._pendingActivateRequests.get(requestId);
+        if (pending) {
+          this._pendingActivateRequests.delete(requestId);
+          pending.resolve(data);
+        }
+      }
+      if (data?.commanderState && typeof data.commanderState === "object") {
+        window.dispatchEvent(new CustomEvent("sectorfall:commander_state", { detail: data.commanderState }));
+      }
+      if (data?.active_ship_stats && typeof data.active_ship_stats === "object") {
+        window.dispatchEvent(new CustomEvent("sectorfall:authoritative_ship_state", { detail: data.active_ship_stats }));
+      }
+      window.dispatchEvent(new CustomEvent("sectorfall:commander_activate_result", { detail: data }));
+    } catch {
+      // ignore
+    }
+  }
+
   handleFabricationResult(data) {
     try {
       const requestId = data?.requestId;
