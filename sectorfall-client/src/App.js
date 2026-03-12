@@ -2750,7 +2750,7 @@ const CommanderMenu = ({ gameState, onClose, isEditing, onToggleEdit, onSaveName
                 }
             },
                 React.createElement('img', {
-                    src: commanderData?.portrait_url || '/assets/captain-portrait.png.webp',
+                    src: commanderData?.portrait_url || 'https://rosebud.ai/assets/captain-portrait.png.webp?eV4E',
                     onClick: () => setActivePanel("portraitPicker"),
                     style: { width: '100%', height: '100%', objectFit: 'cover', imageRendering: 'pixelated', cursor: 'pointer' }
                 })
@@ -6709,7 +6709,7 @@ const StationInterior = ({
                 position: 'absolute',
                 width: '110%', // Larger for pan effect
                 height: '110%',
-                backgroundImage: `url(${view === 'hangar' ? '/assets/massive-starport-hangar.webp.webp' : '/assets/starport-interior-dollhouse.png.webp'})`,
+                backgroundImage: `url(${view === 'hangar' ? 'https://rosebud.ai/assets/massive-starport-hangar.webp.webp?UBdB' : 'https://rosebud.ai/assets/starport-interior-dollhouse.png.webp?vicq'})`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 opacity: 0.95,
@@ -6978,7 +6978,7 @@ const StationInterior = ({
                                     }
                                 }, 
                                     React.createElement('img', {
-                                        src: shipConfig?.spriteUrl || '/assets/spaceship.png.webp',
+                                        src: shipConfig?.spriteUrl || 'https://rosebud.ai/assets/spaceship.png.webp?6ILm',
                                         style: { 
                                             width: `${40 * (shipConfig?.uiScale || 1.0)}px`, 
                                             transform: 'rotate(-45deg)', 
@@ -7327,7 +7327,7 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
     
     const activeShip = gameState.ownedShips.find(s => s.id === gameState.activeShipId);
     const shipConfig = SHIP_REGISTRY[activeShip?.type];
-    const spriteUrl = shipConfig?.spriteUrl || '/assets/spaceship.png.webp';
+    const spriteUrl = shipConfig?.spriteUrl || 'https://rosebud.ai/assets/spaceship.png.webp?6ILm';
 
     const slots = [
         { id: 'weapon1', type: 'weapon', label: 'W1', position: { x: '25%', y: '12%' } },
@@ -10891,81 +10891,95 @@ showStarportUI: function (starportId) {
         });
     };
 
-    const handleActivateShip = async (ship) => {
+    const handleShipActivationTransaction = async (ship) => {
         if (!isDocked || !cloudUser) {
             showNotification("ACTIVATE FAILED: VESSEL MUST BE DOCKED AT STARPORT", "error");
             return;
         }
 
-        const currentSystemId = gameState.currentSystem?.id;
-        const starportId = SYSTEM_TO_STARPORT[currentSystemId];
+        if (!backendSocket?.requestActivateShip) {
+            showNotification("ACTIVATE FAILED: BACKEND COMMAND UNAVAILABLE", "error");
+            return;
+        }
 
-        if (!starportId) {
-            showNotification("ACTIVATE FAILED: NO AUTHORITATIVE STARPORT ID", "error");
+        const shipId = String(ship?.id || '').trim();
+        if (!shipId) {
+            showNotification("ACTIVATE FAILED: INVALID SHIP", "error");
+            return;
+        }
+
+        if (shipId === gameState.activeShipId) {
+            showNotification(`${ship.name || 'Ship'} already current.`, "info");
             return;
         }
 
         try {
-            // 1. Remove from cloud hangar
-            await cloudService.removeFromHangar(cloudUser.id, ship.id);
-            
-            // 2. Prepare the ship data (hydration)
-            const hydratedShip = hydrateVessel(ship, ship);
-            const shipConfig = SHIP_REGISTRY[hydratedShip.type];
+            const result = await backendSocket.requestActivateShip({ shipId });
+            if (!result?.ok) {
+                showNotification(`ACTIVATE FAILED: ${String(result?.error || 'backend_rejected').replace(/_/g, ' ').toUpperCase()}`, "error");
+                return;
+            }
 
-            const resources = getLiveShipResources(hydratedShip.fittings);
+            const targetShip = hydrateVessel(ship, ship);
+            const shipConfig = SHIP_REGISTRY[resolveShipRegistryKey(targetShip.type) || targetShip.type] || SHIP_REGISTRY[targetShip.type] || {};
+            const resources = getLiveShipResources(targetShip.fittings || {});
 
-            // 3. Update state: move to ownedShips AND set as active
             setGameState(prev => {
-                const newState = {
+                const currentActiveShip = (prev.ownedShips || []).find(s => s.id === prev.activeShipId)
+                    || (prev.hangarShips || []).find(s => s.id === prev.activeShipId)
+                    || null;
+
+                const nextOwnedShips = (prev.ownedShips || []).filter(s => s.id !== shipId && s.id !== currentActiveShip?.id);
+                nextOwnedShips.push(targetShip);
+
+                const nextHangarShips = (prev.hangarShips || []).filter(s => s.id !== shipId && s.id !== currentActiveShip?.id);
+                if (currentActiveShip && currentActiveShip.id !== shipId) {
+                    nextHangarShips.push({ ...currentActiveShip });
+                }
+
+                return {
                     ...prev,
-                    hangarShips: (prev.hangarShips || []).filter(s => s.id !== ship.id),
-                    ownedShips: [...prev.ownedShips, hydratedShip],
-                    activeShipId: ship.id,
-                    shipName: getShipDisplayName(hydratedShip.type),
-                    shipClass: getShipClassLabel(hydratedShip.type),
-                    fittings: hydratedShip.fittings,
+                    hangarShips: nextHangarShips,
+                    ownedShips: nextOwnedShips,
+                    activeShipId: shipId,
+                    shipName: getShipDisplayName(targetShip.type),
+                    shipClass: getShipClassLabel(targetShip.type),
+                    fittings: targetShip.fittings || {},
                     currentPowerGrid: resources.power,
                     currentCpu: resources.cpu,
-                    maxHp: shipConfig.hp,
-                    hp: hydratedShip.hp,
-                    armor: shipConfig.armor,
-                    kineticRes: shipConfig.kineticRes,
-                    thermalRes: shipConfig.thermalRes,
-                    blastRes: shipConfig.blastRes,
-                    maxEnergy: shipConfig.baseEnergy,
-                    energy: hydratedShip.energy,
-                    reactorRecovery: shipConfig.baseEnergyRecharge || 1.0,
-                    maxPowerGrid: shipConfig.basePG,
-                    maxCpu: shipConfig.baseCPU,
-                    cargoHold: shipConfig.cargoHold,
-                    cargoMaxVolume: shipConfig.cargoMaxVolume,
-                    sigRadius: shipConfig.baseSigRadius,
-                    scanRange: shipConfig.scanRange,
-                    lockOnRange: shipConfig.lockOnRange,
-                    lockMultiplier: shipConfig.lockMultiplier,
-                    maxSpeed: hydratedShip.maxSpeed || shipConfig.maxSpeed || 3.5,
-                    turnSpeed: hydratedShip.turnSpeed || shipConfig.turnSpeed || 0.045,
-                    modifiedStats: hydratedShip.modifiedStats || null
+                    maxHp: typeof targetShip.maxHp === 'number' ? targetShip.maxHp : (shipConfig.hp || prev.maxHp),
+                    hp: typeof targetShip.hp === 'number' ? targetShip.hp : (shipConfig.hp || prev.hp),
+                    armor: typeof targetShip.armor === 'number' ? targetShip.armor : (shipConfig.armor || prev.armor),
+                    kineticRes: typeof targetShip.kineticRes === 'number' ? targetShip.kineticRes : (shipConfig.kineticRes || prev.kineticRes),
+                    thermalRes: typeof targetShip.thermalRes === 'number' ? targetShip.thermalRes : (shipConfig.thermalRes || prev.thermalRes),
+                    blastRes: typeof targetShip.blastRes === 'number' ? targetShip.blastRes : (shipConfig.blastRes || prev.blastRes),
+                    maxEnergy: typeof targetShip.maxEnergy === 'number' ? targetShip.maxEnergy : (shipConfig.baseEnergy || prev.maxEnergy),
+                    energy: typeof targetShip.energy === 'number' ? targetShip.energy : (shipConfig.baseEnergy || prev.energy),
+                    reactorRecovery: shipConfig.baseEnergyRecharge || prev.reactorRecovery || 1.0,
+                    maxPowerGrid: shipConfig.basePG || prev.maxPowerGrid,
+                    maxCpu: shipConfig.baseCPU || prev.maxCpu,
+                    cargoHold: shipConfig.cargoHold || prev.cargoHold,
+                    cargoMaxVolume: shipConfig.cargoMaxVolume || prev.cargoMaxVolume,
+                    sigRadius: shipConfig.baseSigRadius || prev.sigRadius,
+                    scanRange: shipConfig.scanRange || prev.scanRange,
+                    lockOnRange: shipConfig.lockOnRange || prev.lockOnRange,
+                    lockMultiplier: shipConfig.lockMultiplier || prev.lockMultiplier,
+                    maxSpeed: targetShip.maxSpeed || shipConfig.maxSpeed || prev.maxSpeed || 3.5,
+                    turnSpeed: targetShip.turnSpeed || shipConfig.turnSpeed || prev.turnSpeed || 0.045,
+                    modifiedStats: targetShip.modifiedStats || null
                 };
-                
-                // CRITICAL: Immediate Cloud Manifest Sync to prevent race conditions on refresh
-                cloudService.updateCommanderData(cloudUser.id, {
-                    owned_ships: newState.ownedShips,
-                    active_ship_id: newState.activeShipId
-                });
-                
-                return newState;
             });
 
-            // 4. Notify Engine
-            gameManagerRef.current?.rebuildShip(hydratedShip);
-            
-            showNotification(`${hydratedShip.name} activated and ready for command.`, "success");
+            gameManagerRef.current?.rebuildShip(targetShip);
+            showNotification(`${targetShip.name} activated and previous vessel secured in hangar.`, "success");
         } catch (err) {
             console.error("Activate failed:", err);
-            showNotification("ACTIVATE FAILED: Could not process vessel manifestation.", "error");
+            showNotification("ACTIVATE FAILED: Could not process vessel activation.", "error");
         }
+    };
+
+    const handleActivateShip = async (ship) => {
+        await handleShipActivationTransaction(ship);
     };
 
     const handleDepositShip = async (ship) => {
@@ -11022,59 +11036,10 @@ showStarportUI: function (starportId) {
         }
     };
 
-    const handleCommandShip = (shipId) => {
-        const targetShip = gameState.ownedShips.find(s => s.id === shipId);
+    const handleCommandShip = async (shipId) => {
+        const targetShip = gameState.ownedShips.find(s => s.id === shipId) || gameState.hangarShips.find(s => s.id === shipId);
         if (!targetShip) return;
-
-        const shipConfig = SHIP_REGISTRY[targetShip.type];
-        const resources = getLiveShipResources(targetShip.fittings);
-        
-        setGameState(prev => {
-            const newState = {
-                ...prev,
-                activeShipId: shipId,
-                shipName: getShipDisplayName(targetShip.type),
-                shipClass: getShipClassLabel(targetShip.type),
-                fittings: targetShip.fittings,
-                currentPowerGrid: resources.power,
-                currentCpu: resources.cpu,
-                // Re-initialize ship base stats
-                maxHp: shipConfig.hp,
-                hp: targetShip.hp ?? shipConfig.hp, 
-                armor: shipConfig.armor,
-                kineticRes: shipConfig.kineticRes,
-                thermalRes: shipConfig.thermalRes,
-                blastRes: shipConfig.blastRes,
-                maxEnergy: shipConfig.baseEnergy,
-                energy: targetShip.energy ?? shipConfig.baseEnergy,
-                reactorRecovery: shipConfig.baseEnergyRecharge || 1.0,
-                maxPowerGrid: shipConfig.basePG,
-                maxCpu: shipConfig.baseCPU,
-                cargoHold: shipConfig.cargoHold,
-                cargoMaxVolume: shipConfig.cargoMaxVolume,
-                sigRadius: shipConfig.baseSigRadius,
-                scanRange: shipConfig.scanRange,
-                lockOnRange: shipConfig.lockOnRange,
-                lockMultiplier: shipConfig.lockMultiplier,
-                maxSpeed: targetShip.maxSpeed || shipConfig.maxSpeed || 3.5,
-                turnSpeed: targetShip.turnSpeed || shipConfig.turnSpeed || 0.045,
-                modifiedStats: targetShip.modifiedStats || null
-            };
-
-            // CRITICAL: Immediate Cloud Manifest Sync to prevent race conditions on refresh
-            if (cloudUser) {
-                cloudService.updateCommanderData(cloudUser.id, {
-                    active_ship_id: shipId
-                });
-            }
-
-            return newState;
-        });
-
-        // Notify GameManager to rebuild the ship
-        gameManagerRef.current?.rebuildShip(targetShip);
-        
-        showNotification(`Commanding ${targetShip.name} (${targetShip.type})`, "info");
+        await handleShipActivationTransaction(targetShip);
     };
 
     const [isShipDestroyed, setIsShipDestroyed] = useState(false);
@@ -12506,7 +12471,7 @@ backendSocket.sendUndock(
                 }
             },
                 React.createElement('img', {
-                    src: commanderData?.portrait_url || '/assets/captain-portrait.png.webp',
+                    src: commanderData?.portrait_url || 'https://rosebud.ai/assets/captain-portrait.png.webp?eV4E',
                     style: {
                         width: '100%',
                         height: '100%',

@@ -139,6 +139,7 @@ export class BackendSocket {
     this._pendingCommanderRequests = new Map();
     this._pendingCommanderProfileUpdates = new Map();
     this._pendingRepairRequests = new Map();
+    this._pendingActivateRequests = new Map();
     this._pendingFabricationRequests = new Map();
     this._pendingMarketRequests = new Map();
     this.arenaHooks = null;
@@ -503,6 +504,10 @@ export class BackendSocket {
 
       case "COMMANDER_REPAIR_RESULT":
         this.handleCommanderRepairResult(data);
+        break;
+
+      case "COMMANDER_ACTIVATE_RESULT":
+        this.handleCommanderActivateResult(data);
         break;
 
       case "FABRICATION_RESULT":
@@ -1929,6 +1934,28 @@ if (fireSolution && typeof fireSolution === "object") {
           pending.resolve(null);
         }
       }, 4000);
+    });
+  }
+
+  requestActivateShip({ shipId } = {}) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !shipId) return Promise.resolve(null);
+    const requestId = `cmd-activate-${Date.now()}-${++this.seq}`;
+    return new Promise((resolve) => {
+      this._pendingActivateRequests.set(requestId, { resolve, createdAt: Date.now(), shipId });
+      this.socket.send(JSON.stringify({
+        type: "COMMANDER_ACTIVATE_SHIP",
+        requestId,
+        userId: this.userId,
+        shipId,
+        clientTime: Date.now()
+      }));
+      setTimeout(() => {
+        const pending = this._pendingActivateRequests.get(requestId);
+        if (pending) {
+          this._pendingActivateRequests.delete(requestId);
+          pending.resolve(null);
+        }
+      }, 6000);
     });
   }
 

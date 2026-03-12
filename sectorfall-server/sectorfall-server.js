@@ -4465,10 +4465,7 @@ async function persistShipInstanceToHangar(player, shipInstanceId, vitalsOverrid
   const normalizedShipInstanceId = String(shipInstanceId || '').trim();
   if (!normalizedShipInstanceId) return false;
   try {
-    let hangarRow = await loadHangarShipRecordById(player.userId, normalizedShipInstanceId);
-    if (!hangarRow?.ship_config) {
-      hangarRow = await ensureHangarShipRecord(player, normalizedShipInstanceId, vitalsOverride);
-    }
+    const hangarRow = await ensureHangarShipRecord(player, normalizedShipInstanceId, vitalsOverride);
     if (!hangarRow?.ship_config) return false;
 
     const nextHp = vitalsOverride && Object.prototype.hasOwnProperty.call(vitalsOverride, 'hp') ? vitalsOverride.hp : player.hp;
@@ -5986,6 +5983,80 @@ async function handleCommanderGetState(socket, data) {
   if (!userId || !player || player.userId !== userId) return;
   console.log(`[Commander][GetState] user=${userId} requestId=${data?.requestId || 'null'}`);
   await sendCommanderState(socket, userId, data?.requestId || null);
+}
+
+async function handleCommanderActivateShip(socket, data) {
+  const player = players.get(socket);
+  const userId = String(data?.userId || player?.userId || '').trim();
+  const requestId = data?.requestId || null;
+  const targetShipId = String(data?.shipId || data?.ship_id || '').trim();
+  if (!player || !userId || player.userId !== userId) return;
+  if (!player.docked) {
+    socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: false, error: "not_docked", shipId: targetShipId || null, serverTime: Date.now() }));
+    return;
+  }
+  if (!targetShipId) {
+    socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: false, error: "invalid_request", shipId: null, serverTime: Date.now() }));
+    return;
+  }
+
+  try {
+    const commander = await loadCommanderDataRow(userId);
+    const previousActiveShipId = String(commander?.active_ship_id || player?.active_ship_instance_id || player?.current_ship_instance_id || '').trim();
+
+    if (previousActiveShipId && previousActiveShipId === targetShipId) {
+      await ensureHangarShipRecord(player, targetShipId);
+      await hydratePlayerFromCommanderActiveShip(player, { fillVitals: true, persistState: true });
+      socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: true, shipId: targetShipId, previousShipId: previousActiveShipId || null, alreadyActive: true, serverTime: Date.now() }));
+      await sendCommanderState(socket, userId, requestId);
+      return;
+    }
+
+    if (previousActiveShipId) {
+      const persistedOld = await persistActiveShipToHangar(player, {
+        hp: player.hp,
+        maxHp: player.maxHp,
+        shields: player.shields,
+        maxShields: player.maxShields,
+        energy: player.energy,
+        maxEnergy: player.maxEnergy,
+        fittings: player.fittings,
+        hull_id: player.ship_type
+      });
+      if (!persistedOld) {
+        socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: false, error: "persist_old_ship_failed", shipId: targetShipId, previousShipId: previousActiveShipId, serverTime: Date.now() }));
+        return;
+      }
+    }
+
+    const targetRow = await loadHangarShipRecordById(userId, targetShipId);
+    if (!targetRow?.ship_config) {
+      socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: false, error: "target_ship_not_found", shipId: targetShipId, previousShipId: previousActiveShipId || null, serverTime: Date.now() }));
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from('commander_data')
+      .update({ active_ship_id: targetShipId, updated_at: nowIso() })
+      .eq('id', userId);
+    if (updateError) {
+      console.warn('[Commander][Activate] Failed to update commander active_ship_id:', userId, targetShipId, updateError.message);
+      socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: false, error: "activate_update_failed", shipId: targetShipId, previousShipId: previousActiveShipId || null, serverTime: Date.now() }));
+      return;
+    }
+
+    const hydrated = await hydratePlayerFromCommanderActiveShip(player, { fillVitals: true, persistState: true });
+    if (!hydrated) {
+      socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: false, error: "hydrate_failed", shipId: targetShipId, previousShipId: previousActiveShipId || null, serverTime: Date.now() }));
+      return;
+    }
+
+    socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: true, shipId: targetShipId, previousShipId: previousActiveShipId || null, serverTime: Date.now() }));
+    await sendCommanderState(socket, userId, requestId);
+  } catch (e) {
+    console.warn('[Commander][Activate] exception:', userId, targetShipId, e?.message || e);
+    socket.send(JSON.stringify({ type: "COMMANDER_ACTIVATE_RESULT", requestId, ok: false, error: e?.message || 'activate_failed', shipId: targetShipId || null, serverTime: Date.now() }));
+  }
 }
 
 async function handleCommanderRepairShip(socket, data) {
@@ -9832,6 +9903,8 @@ wss.on("connection", (socket) => {
         return await handleFleetPromoteRequest(socket, data);
       case "COMMANDER_GET_STATE":
         return await handleCommanderGetState(socket, data);
+      case "COMMANDER_ACTIVATE_SHIP":
+        return await handleCommanderActivateShip(socket, data);
       case "COMMANDER_REPAIR_SHIP":
         return await handleCommanderRepairShip(socket, data);
       case "FABRICATE_BLUEPRINT_REQUEST":
