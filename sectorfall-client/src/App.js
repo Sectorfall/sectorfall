@@ -7077,26 +7077,7 @@ const StationInterior = ({
                                         boxSizing: 'border-box'
                                     }
                                 }, 'IN CONTROL') : (
-                                    isInHangar ? React.createElement('button', {
-                                        onClick: (e) => { e.stopPropagation(); onActivateShip(ship); },
-                                        style: {
-                                            padding: '8px 16px',
-                                            height: '32px',
-                                            background: 'transparent',
-                                            border: '1px solid #ffcc00',
-                                            color: '#ffcc00',
-                                            fontSize: '9px',
-                                            fontWeight: 'bold',
-                                            cursor: 'pointer',
-                                            letterSpacing: '1px',
-                                            transition: 'all 0.2s',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center'
-                                        },
-                                        onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; },
-                                        onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; }
-                                    }, 'ACTIVATE') : React.createElement(React.Fragment, null,
+                                    isInHangar ? null : React.createElement(React.Fragment, null,
                                         React.createElement('button', {
                                             onClick: (e) => { e.stopPropagation(); onCommandShip(ship.id); },
                                             style: {
@@ -7168,30 +7149,51 @@ const StationInterior = ({
                         ship: selectedShip, 
                         fittings: selectedShip.id === gameState.activeShipId ? gameState.fittings : (selectedShip.fittings || {})
                     },
-                        // Fitting Action
+                        // Fitting / Activation Action
                         React.createElement('div', { style: { display: 'flex', gap: '10px', marginTop: '10px' } },
-                            React.createElement('button', {
-                                onClick: () => {
-                                    if (selectedShip.id !== gameState.activeShipId) onCommandShip(selectedShip.id);
-                                    onOpenFitting();
-                                },
-                                style: {
-                                    flex: 1,
-                                    padding: '12px',
-                                    background: 'transparent',
-                                    border: '1px solid #ffcc00',
-                                    color: '#ffcc00',
-                                    fontSize: '12px',
-                                    fontWeight: 'bold',
-                                    cursor: 'pointer',
-                                    letterSpacing: '2px',
-                                    transition: 'all 0.2s',
-                                    boxShadow: '0 0 15px rgba(255,204,0,0.1)',
-                                    flexShrink: 0
-                                },
-                                onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; e.target.style.boxShadow = '0 0 25px rgba(255,204,0,0.3)'; },
-                                onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; e.target.style.boxShadow = '0 0 15px rgba(255,204,0,0.1)'; }
-                            }, 'ACCESS SHIP FITTING'),
+                            selectedShip.id === gameState.activeShipId
+                                ? React.createElement('button', {
+                                    onClick: () => {
+                                        onOpenFitting();
+                                    },
+                                    style: {
+                                        flex: 1,
+                                        padding: '12px',
+                                        background: 'transparent',
+                                        border: '1px solid #ffcc00',
+                                        color: '#ffcc00',
+                                        fontSize: '12px',
+                                        fontWeight: 'bold',
+                                        cursor: 'pointer',
+                                        letterSpacing: '2px',
+                                        transition: 'all 0.2s',
+                                        boxShadow: '0 0 15px rgba(255,204,0,0.1)',
+                                        flexShrink: 0
+                                    },
+                                    onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; e.target.style.boxShadow = '0 0 25px rgba(255,204,0,0.3)'; },
+                                    onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; e.target.style.boxShadow = '0 0 15px rgba(255,204,0,0.1)'; }
+                                }, 'ACCESS SHIP FITTING')
+                                : React.createElement('button', {
+                                    onClick: () => {
+                                        onActivateShip(selectedShip);
+                                    },
+                                    style: {
+                                        flex: 1,
+                                        padding: '12px',
+                                        background: 'transparent',
+                                        border: '1px solid #ffcc00',
+                                        color: '#ffcc00',
+                                        fontSize: '12px',
+                                        fontWeight: 'bold',
+                                        cursor: 'pointer',
+                                        letterSpacing: '2px',
+                                        transition: 'all 0.2s',
+                                        boxShadow: '0 0 15px rgba(255,204,0,0.1)',
+                                        flexShrink: 0
+                                    },
+                                    onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; e.target.style.boxShadow = '0 0 25px rgba(255,204,0,0.3)'; },
+                                    onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; e.target.style.boxShadow = '0 0 15px rgba(255,204,0,0.1)'; }
+                                }, 'ACTIVATE'),
 
                             // Repair Button inside stats pane
                             selectedShip.hp < (SHIP_REGISTRY[selectedShip.type]?.hp || 0) && React.createElement('button', {
