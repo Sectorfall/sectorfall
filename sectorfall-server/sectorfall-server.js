@@ -3130,7 +3130,7 @@ function sanitizeShipFittingsSchema(value) {
 }
 
 function buildDefaultShipFittingsSchema(shipDef = null, existingFittings = null) {
-  const defaults = sanitizeShipFittingsSchema(
+  const rawDefaults = sanitizeShipFittingsSchema(
     shipDef?.fittings
     || shipDef?.slot_layout
     || shipDef?.slotLayout
@@ -3140,11 +3140,21 @@ function buildDefaultShipFittingsSchema(shipDef = null, existingFittings = null)
     || null
   );
   const existing = sanitizeShipFittingsSchema(existingFittings);
-  const normalized = { ...defaults };
-  for (const [slotId, value] of Object.entries(existing)) {
-    normalized[slotId] = value ?? null;
-  }
-  return Object.keys(normalized).length > 0 ? normalized : { ...FITTINGS_SLOT_SCHEMA };
+  const normalized = { ...FITTINGS_SLOT_SCHEMA };
+
+  const applySlots = (source = {}) => {
+    for (const [slotId, value] of Object.entries(source)) {
+      const key = String(slotId || '').trim();
+      if (!key) continue;
+      if (!Object.prototype.hasOwnProperty.call(FITTINGS_SLOT_SCHEMA, key)) continue;
+      normalized[key] = value ?? null;
+    }
+  };
+
+  applySlots(rawDefaults);
+  applySlots(existing);
+
+  return { ...normalized };
 }
 
 function normalizeContentShipRow(row = {}) {
