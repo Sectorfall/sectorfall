@@ -974,6 +974,37 @@ const BattlegroundBlackoutOverlay = ({ active, opaque }) => {
     });
 };
 
+const SpaceTransitionOverlay = ({ active, label = 'TRANSIT' }) => {
+    if (!active) return null;
+    return React.createElement('div', {
+        style: {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            background: '#000',
+            zIndex: 10005,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'monospace',
+            letterSpacing: '4px',
+            color: '#d7ecff',
+            textShadow: '0 0 18px rgba(255,255,255,0.25)'
+        }
+    },
+        React.createElement('div', {
+            style: {
+                fontSize: '26px',
+                fontWeight: 'bold',
+                opacity: 0.92
+            }
+        }, String(label || 'TRANSIT').toUpperCase())
+    );
+};
+
 const CLUSTER_GALAXY_POSITIONS = {
     alpha: { x: -240, y: -120 },
     beta: { x: 20, y: -220 },
@@ -7077,7 +7108,26 @@ const StationInterior = ({
                                         boxSizing: 'border-box'
                                     }
                                 }, 'IN CONTROL') : (
-                                    isInHangar ? null : React.createElement(React.Fragment, null,
+                                    isInHangar ? React.createElement('button', {
+                                        onClick: (e) => { e.stopPropagation(); onActivateShip(ship); },
+                                        style: {
+                                            padding: '8px 16px',
+                                            height: '32px',
+                                            background: 'transparent',
+                                            border: '1px solid #ffcc00',
+                                            color: '#ffcc00',
+                                            fontSize: '9px',
+                                            fontWeight: 'bold',
+                                            cursor: 'pointer',
+                                            letterSpacing: '1px',
+                                            transition: 'all 0.2s',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        },
+                                        onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; },
+                                        onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; }
+                                    }, 'ACTIVATE') : React.createElement(React.Fragment, null,
                                         React.createElement('button', {
                                             onClick: (e) => { e.stopPropagation(); onCommandShip(ship.id); },
                                             style: {
@@ -7149,51 +7199,30 @@ const StationInterior = ({
                         ship: selectedShip, 
                         fittings: selectedShip.id === gameState.activeShipId ? gameState.fittings : (selectedShip.fittings || {})
                     },
-                        // Fitting / Activation Action
+                        // Fitting Action
                         React.createElement('div', { style: { display: 'flex', gap: '10px', marginTop: '10px' } },
-                            selectedShip.id === gameState.activeShipId
-                                ? React.createElement('button', {
-                                    onClick: () => {
-                                        onOpenFitting();
-                                    },
-                                    style: {
-                                        flex: 1,
-                                        padding: '12px',
-                                        background: 'transparent',
-                                        border: '1px solid #ffcc00',
-                                        color: '#ffcc00',
-                                        fontSize: '12px',
-                                        fontWeight: 'bold',
-                                        cursor: 'pointer',
-                                        letterSpacing: '2px',
-                                        transition: 'all 0.2s',
-                                        boxShadow: '0 0 15px rgba(255,204,0,0.1)',
-                                        flexShrink: 0
-                                    },
-                                    onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; e.target.style.boxShadow = '0 0 25px rgba(255,204,0,0.3)'; },
-                                    onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; e.target.style.boxShadow = '0 0 15px rgba(255,204,0,0.1)'; }
-                                }, 'ACCESS SHIP FITTING')
-                                : React.createElement('button', {
-                                    onClick: () => {
-                                        onActivateShip(selectedShip);
-                                    },
-                                    style: {
-                                        flex: 1,
-                                        padding: '12px',
-                                        background: 'transparent',
-                                        border: '1px solid #ffcc00',
-                                        color: '#ffcc00',
-                                        fontSize: '12px',
-                                        fontWeight: 'bold',
-                                        cursor: 'pointer',
-                                        letterSpacing: '2px',
-                                        transition: 'all 0.2s',
-                                        boxShadow: '0 0 15px rgba(255,204,0,0.1)',
-                                        flexShrink: 0
-                                    },
-                                    onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; e.target.style.boxShadow = '0 0 25px rgba(255,204,0,0.3)'; },
-                                    onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; e.target.style.boxShadow = '0 0 15px rgba(255,204,0,0.1)'; }
-                                }, 'ACTIVATE'),
+                            React.createElement('button', {
+                                onClick: () => {
+                                    if (selectedShip.id !== gameState.activeShipId) onCommandShip(selectedShip.id);
+                                    onOpenFitting();
+                                },
+                                style: {
+                                    flex: 1,
+                                    padding: '12px',
+                                    background: 'transparent',
+                                    border: '1px solid #ffcc00',
+                                    color: '#ffcc00',
+                                    fontSize: '12px',
+                                    fontWeight: 'bold',
+                                    cursor: 'pointer',
+                                    letterSpacing: '2px',
+                                    transition: 'all 0.2s',
+                                    boxShadow: '0 0 15px rgba(255,204,0,0.1)',
+                                    flexShrink: 0
+                                },
+                                onMouseEnter: (e) => { e.target.style.background = '#ffcc00'; e.target.style.color = '#000'; e.target.style.boxShadow = '0 0 25px rgba(255,204,0,0.3)'; },
+                                onMouseLeave: (e) => { e.target.style.background = 'transparent'; e.target.style.color = '#ffcc00'; e.target.style.boxShadow = '0 0 15px rgba(255,204,0,0.1)'; }
+                            }, 'ACCESS SHIP FITTING'),
 
                             // Repair Button inside stats pane
                             selectedShip.hp < (SHIP_REGISTRY[selectedShip.type]?.hp || 0) && React.createElement('button', {
@@ -8662,6 +8691,7 @@ const handleEnterArena = () => {
     const [notifications, setNotifications] = useState([]);
     const lastNotificationTimeRef = useRef(0);
     const [isDocked, setIsDocked] = useState(true);
+    const [spaceTransitionOverlay, setSpaceTransitionOverlay] = useState({ active: false, label: '' });
     const [showStarMap, setShowStarMap] = useState(false);
     const [initialStarMapView, setInitialStarMapView] = useState('sector');
     const [isLeapMode, setIsLeapMode] = useState(false);
@@ -9913,6 +9943,7 @@ let targetSystemId = STARPORT_TO_SYSTEM[lastStationId] || 'cygnus-prime';
                 console.log("[Dock][Client] GameManager dock callback", { docked, starportId });
 
                 if (docked) {
+                    setSpaceTransitionOverlay({ active: true, label: 'DOCKING' });
                     try {
                         const liveTelemetry = gameManagerRef.current?.getTelemetry?.() || null;
                         const snapshotTelemetry = gameManagerRef.current?.lastSpaceTelemetry || null;
@@ -10017,6 +10048,7 @@ setLocalPlayerSpawn: function (x, y, rot) {
   // If we were hiding the ship until authoritative spawn, unhide now.
   try { if (s.sprite) s.sprite.visible = true; } catch (e) {}
   gm._hideShipUntilSpawn = false;
+  try { setSpaceTransitionOverlay({ active: false, label: '' }); } catch (e) {}
 
   // Normalize rotation
   rot = (typeof rot === "number") ? rot : 0;
@@ -10074,6 +10106,7 @@ showStarportUI: function (starportId) {
 
   // UI only here. DOCK is sent from the actual docking interaction path.
   setIsDocked(true);
+  setSpaceTransitionOverlay({ active: false, label: '' });
   gameManager.setDocked(true);
 },
 
@@ -11997,6 +12030,7 @@ if (gameState.shipName === "PENDING" || gameState.activeShipId === "PENDING") {
     }
 
     // 🚀 SEND UNDOCK TO SERVER
+    setSpaceTransitionOverlay({ active: true, label: 'UNDOCKING' });
 // Prevent a 0,0 / starport-exit frame before the server's WELCOME arrives
 backendSocket.awaitingSpawn = true;
 try { if (gameManagerRef.current?.ship?.sprite) gameManagerRef.current.ship.sprite.visible = false; } catch (e) {}
@@ -13386,6 +13420,7 @@ backendSocket.sendUndock(
         battlegroundExtractState && React.createElement(BattlegroundCompleteOverlay, { state: battlegroundExtractState }),
         battlegroundFailState && React.createElement(BattlegroundFailOverlay, { state: battlegroundFailState, onRespawn: handleBattlegroundFailRespawn }),
         React.createElement(BattlegroundBlackoutOverlay, battlegroundRespawnFade),
+        React.createElement(SpaceTransitionOverlay, spaceTransitionOverlay),
         isShipDestroyed && React.createElement(ShipDestroyedOverlay, { 
             summary: destructionSummary, 
             onRespawn: handleRespawn 
