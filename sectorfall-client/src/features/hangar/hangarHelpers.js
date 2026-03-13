@@ -1,16 +1,26 @@
 import { SHIP_REGISTRY } from '../../shipRegistry.js';
 import { resolveShipId, resolveShipRegistryKey } from '../../data/ships/catalog.js';
 
+const DEFAULT_FITTINGS = {
+  weapon1: null,
+  weapon2: null,
+  active1: null,
+  passive1: null,
+  passive2: null,
+  rig1: null,
+  synapse1: null,
+  synapse2: null,
+  synapse3: null
+};
+
 export const prettifyShipId = (value) => {
   const s = String(value || '').trim();
   if (!s) return 'UNKNOWN SHIP';
-
   const cleaned = s
     .replace(/^ship_/, '')
     .replace(/_t\d+$/i, '')
     .replace(/_/g, ' ')
     .trim();
-
   return cleaned ? cleaned.toUpperCase() : s.toUpperCase();
 };
 
@@ -31,19 +41,25 @@ export const getShipClassLabel = (shipTypeOrId) => {
   return String(candidate).toUpperCase();
 };
 
-export const getShipRegistryConfig = (shipTypeOrId) => {
-  const regKey = resolveShipRegistryKey(shipTypeOrId) || shipTypeOrId;
-  return SHIP_REGISTRY[regKey] || SHIP_REGISTRY[shipTypeOrId] || null;
-};
+export const buildHangarShipRecord = (hangarRow, options = {}) => {
+  const { hydrateVessel, fallbackShipType = 'OMNI SCOUT' } = options;
+  const config = hangarRow?.ship_config || {};
+  const type = config.type || config.item_id || fallbackShipType;
+  const registryKey = resolveShipRegistryKey(type) || type;
+  const registry = SHIP_REGISTRY[registryKey] || SHIP_REGISTRY[type] || SHIP_REGISTRY[fallbackShipType] || {};
 
-export const buildHangarShipRecord = (ship) => {
-  const registry = getShipRegistryConfig(ship?.type) || getShipRegistryConfig(ship?.item_id);
-  const resolvedType = ship?.type || ship?.item_id || registry?.classId || null;
-
-  return {
-    ...ship,
-    type: resolvedType,
-    classId: registry?.classId || resolvedType,
-    isShip: true
+  const baseRecord = {
+    ...registry,
+    ...config,
+    id: hangarRow?.ship_id || config.id,
+    type,
+    classId: config.classId || registry.classId || type,
+    isShip: true,
+    hp: config.hp ?? registry.hp,
+    energy: config.energy ?? registry.baseEnergy,
+    fittings: config.fittings || DEFAULT_FITTINGS,
+    dbId: hangarRow?.id
   };
+
+  return typeof hydrateVessel === 'function' ? hydrateVessel(baseRecord, baseRecord) : baseRecord;
 };
