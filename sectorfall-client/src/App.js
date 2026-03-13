@@ -11,6 +11,11 @@ import { ITEM_CATALOG } from './data/items/catalog.js';
 import { createItemInstance, deriveItemIdFromBlueprint } from './data/items/items.helpers.js';
 import { validateItemBlueprintIntegrity } from './data/items/validate.js';
 import { resolveShipId, resolveShipRegistryKey } from './data/ships/catalog.js';
+import {
+    buildHangarShipRecord,
+    getShipClassLabel,
+    getShipDisplayName
+} from './features/hangar/hangarHelpers.js';
 import { cloudService } from './CloudService.js';
 import { supabase } from './supabaseClient.js';
 import { chatService } from './chat/ChatService.js';
@@ -30,40 +35,6 @@ function numOr(value, fallback = 0) {
     ? value
     : fallback;
 }
-
-// -----------------------------------------------------
-// SHIP DISPLAY NAME (ship_id -> human name)
-// -----------------------------------------------------
-const prettifyShipId = (value) => {
-  const s = String(value || '').trim();
-  if (!s) return 'UNKNOWN SHIP';
-  // ship_omni_scout_t1 -> OMNI SCOUT
-  const cleaned = s
-    .replace(/^ship_/, '')
-    .replace(/_t\d+$/i, '')
-    .replace(/_/g, ' ')
-    .trim();
-  return cleaned ? cleaned.toUpperCase() : s.toUpperCase();
-};
-
-const getShipDisplayName = (shipTypeOrId) => {
-  const sid = resolveShipId(shipTypeOrId) || shipTypeOrId;
-  const regKey = resolveShipRegistryKey(sid) || sid;
-  const cfg = SHIP_REGISTRY[regKey] || SHIP_REGISTRY[sid] || SHIP_REGISTRY[shipTypeOrId];
-  return cfg?.name || cfg?.displayName || cfg?.label || prettifyShipId(shipTypeOrId);
-};
-
-// More conservative: class label should never fall back to a raw ship_id.
-const getShipClassLabel = (shipTypeOrId) => {
-  const sid = resolveShipId(shipTypeOrId) || shipTypeOrId;
-  const regKey = resolveShipRegistryKey(sid) || sid;
-  const cfg = SHIP_REGISTRY[regKey] || SHIP_REGISTRY[sid] || SHIP_REGISTRY[shipTypeOrId];
-  const candidate = cfg?.classLabel || cfg?.className || cfg?.hullClass || cfg?.role || cfg?.classId;
-  if (!candidate) return 'VESSEL';
-  // If the "class" is actually a ship id, don't show it.
-  if (String(candidate).toLowerCase().startsWith('ship_')) return 'VESSEL';
-  return String(candidate).toUpperCase();
-};
 
 const STACKABLE_TRANSFER_TYPES = new Set(['resource', 'material', 'blueprint', 'bio-material', 'ore']);
 
@@ -11043,13 +11014,7 @@ showStarportUI: function (starportId) {
         }
 
         try {
-            const registry = SHIP_REGISTRY[resolveShipRegistryKey(ship.type) || ship.type];
-            const shipToSave = {
-                ...ship,
-                type: ship.type,
-                classId: registry?.classId || ship.type,
-                isShip: true
-            };
+            const shipToSave = buildHangarShipRecord(ship);
             
             await cloudService.saveToHangar(cloudUser.id, starportId, ship.id, shipToSave);
             
@@ -12079,13 +12044,7 @@ backendSocket.sendUndock(
 
         if (item.type === 'ship') {
             try {
-                const registry = SHIP_REGISTRY[item.type || item.item_id];
-                const shipToSave = {
-                    ...item,
-                    type: item.type || item.item_id,
-                    classId: registry?.classId || (item.type || item.item_id),
-                    isShip: true
-                };
+                const shipToSave = buildHangarShipRecord(item);
                 await cloudService.saveToHangar(cloudUser.id, starportId, item.id, shipToSave);
                 setGameState(prev => ({ ...prev,
                     ownedShips: prev.ownedShips.filter(s => s.id !== item.id),
