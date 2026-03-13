@@ -33,6 +33,7 @@ import { getFormattedFittingTitle, getFittingHardwareTitle, evaluateFittingCandi
 import { canItemsStackForTransfer, mergeTransferredItemIntoList, removeSingleTransferredItemFromList, calculateCargoTotals } from './features/inventory/inventoryHelpers.js';
 import { buildTransferToStationState, buildTransferToShipState, buildDockedCargoCloudPayload } from './features/inventory/inventoryActions.js';
 import { useCargoMenuState } from './features/inventory/inventoryState.js';
+import { getCurrentTradeStarportId, getTradeItemIdentifier, getTradeItemDisplayName, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -10831,8 +10832,7 @@ showStarportUI: function (starportId) {
 
     const handleListTradeItem = async (item, price, quantity, type) => {
         if (!gameManagerRef.current) return false;
-        const currentSystemId = gameState.currentSystem?.id;
-        const currentStarportId = SYSTEM_TO_STARPORT[currentSystemId];
+        const currentStarportId = getCurrentTradeStarportId(gameState.currentSystem?.id, SYSTEM_TO_STARPORT);
         if (!currentStarportId) {
             showNotification("Listing error: Starport terminal not found.", "error");
             return false;
@@ -10840,20 +10840,17 @@ showStarportUI: function (starportId) {
 
         try {
             await MarketSystem.createSellOrder(
-                item.item_id || item.type || item.id,
+                getTradeItemIdentifier(item),
                 quantity,
                 parseFloat(price),
                 currentStarportId,
                 item
             );
 
-            showNotification(`Listed ${quantity}x ${item.name || item.item_type || item.type || 'item'} for ${price} Cr/unit.`, "success");
+            showNotification(`Listed ${quantity}x ${getTradeItemDisplayName(item)} for ${price} Cr/unit.`, "success");
 
             const updatedStorage = await cloudService.getInventoryState(cloudService.user.id, currentStarportId);
-            setGameState(prev => ({
-                ...prev,
-                storage: { ...prev.storage, [currentStarportId]: (updatedStorage?.items || []).map(hydrateItem) }
-            }));
+            setGameState(prev => buildTradeStorageState(prev, currentStarportId, updatedStorage?.items || [], hydrateItem));
             return true;
         } catch (error) {
             console.error("[TradeHub] Listing failed:", error);
@@ -10870,25 +10867,19 @@ showStarportUI: function (starportId) {
             return;
         }
 
-        const currentStarportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
+        const currentStarportId = getCurrentTradeStarportId(gameState.currentSystem?.id, SYSTEM_TO_STARPORT);
 
         try {
             const result = await MarketSystem.buyListing(listing.id, buyerId, currentStarportId, quantity);
 
             if (result.success) {
-                showNotification(`Purchased ${listing.item?.name || listing.item_type || 'item'} for ${listing.price} Cr.`, "success");
+                showNotification(`Purchased ${getTradeItemDisplayName(listing?.item || listing)} for ${listing.price} Cr.`, "success");
 
                 const updatedStorage = await cloudService.getInventoryState(buyerId, currentStarportId);
 
                 setGameState(prev => ({
-                    ...prev,
-                    credits: typeof result?.commanderState?.credits === 'number'
-                        ? result.commanderState.credits
-                        : prev.credits,
-                    storage: {
-                        ...prev.storage,
-                        [currentStarportId]: (updatedStorage?.items || (prev.storage[currentStarportId] || [])).map(hydrateItem)
-                    }
+                    ...buildTradeStorageState(prev, currentStarportId, updatedStorage?.items || (prev.storage[currentStarportId] || []), hydrateItem),
+                    credits: getCommanderCreditsFromResult(result, prev.credits)
                 }));
             }
         } catch (error) {
@@ -10903,17 +10894,17 @@ showStarportUI: function (starportId) {
 
     const handleCreateBuyOrder = async (itemType, quantity, pricePerUni) => {
         const userId = cloudService.user?.id;
-        const currentStarportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
+        const currentStarportId = getCurrentTradeStarportId(gameState.currentSystem?.id, SYSTEM_TO_STARPORT);
         if (!userId || !currentStarportId) return;
 
         try {
             const result = await MarketSystem.createBuyOrder(itemType, quantity, pricePerUni, currentStarportId);
-            showNotification(`Posted Buy Order for ${quantity}x ${itemType.toUpperCase()}.`, "success");
+            showNotification(`Posted Buy Order for ${quantity}x ${String(itemType || '').toUpperCase()}.`, "success");
             
             const refreshedMarket = await MarketSystem.fetchMarketData(currentStarportId, 'buy_orders');
             setNewBuyOrders(refreshedMarket?.buyOrders || []);
             if (typeof result?.commanderState?.credits === 'number') {
-                setGameState(prev => ({ ...prev, credits: result.commanderState.credits }));
+                setGameState(prev => ({ ...prev, credits: getCommanderCreditsFromResult(result, prev.credits) }));
             }
             return true;
         } catch (error) {
