@@ -36,6 +36,8 @@ import { useCargoMenuState } from './features/inventory/inventoryState.js';
 import { getCurrentTradeStarportId, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
 import { useTradeHubState } from './features/trade/tradeState.js';
 import { createTradeListingTransaction, buyTradeListingTransaction, createTradeBuyOrderTransaction, cancelTradeListingTransaction } from './features/trade/tradeActions.js';
+import { buildFabricationRequestPayload, buildFabricationStateUpdate, buildRefineryStateUpdate } from './features/fabrication/fabricationActions.js';
+import { getFabricationErrorMessage, getFabricationSuccessMessage, getRefineryErrorMessage } from './features/fabrication/fabricationHelpers.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -11155,26 +11157,13 @@ showStarportUI: function (starportId) {
             return { ok: false, error: 'missing_blueprint_instance' };
         }
 
-        const ingredientPayload = (Array.isArray(ingredients) ? ingredients : []).map(({ item, amount, source }) => ({
-            itemId: item?.id,
-            amount,
-            source
-        })).filter(entry => entry.itemId && Number(entry.amount) > 0);
-
         try {
-            const result = await backendSocket.requestFabricateBlueprint({
+            const result = await backendSocket.requestFabricateBlueprint(buildFabricationRequestPayload({
                 starportId,
-                blueprintInstanceId: blueprintItem.id,
-                blueprintId:
-                    blueprintData?.canonical_blueprint_id ||
-                    blueprintData?.canonicalBlueprintId ||
-                    blueprintData?.item_type ||
-                    blueprintData?.item_id ||
-                    blueprintData?.blueprintId ||
-                    blueprintData?.id ||
-                    null,
-                ingredients: ingredientPayload
-            });
+                blueprintData,
+                blueprintItem,
+                ingredients
+            }));
 
             if (!result) {
                 showNotification("FABRICATION FAILED: Backend timeout.", "error");
@@ -11182,56 +11171,23 @@ showStarportUI: function (starportId) {
             }
 
             if (!result.ok) {
-                const reasonMap = {
-                    not_docked: "FABRICATION FAILED: You must be docked.",
-                    wrong_starport: "FABRICATION FAILED: Wrong starport context.",
-                    missing_blueprint_instance: "FABRICATION FAILED: Missing blueprint instance.",
-                    blueprint_not_found: "FABRICATION FAILED: Blueprint item not found.",
-                    blueprint_definition_missing: "FABRICATION FAILED: Blueprint definition missing.",
-                    blueprint_recipe_missing: "FABRICATION FAILED: Blueprint recipe missing.",
-                    ingredients_missing: "FABRICATION FAILED: No ingredients selected.",
-                    ingredient_not_found: "FABRICATION FAILED: Selected ingredient not found.",
-                    insufficient_ingredient_amount: "FABRICATION FAILED: Insufficient ingredient amount.",
-                    invalid_ingredient_type: "FABRICATION FAILED: Invalid ingredient type.",
-                    recipe_not_satisfied: "FABRICATION FAILED: Recipe requirements not met.",
-                    blueprint_consume_failed: "FABRICATION FAILED: Blueprint consume failed.",
-                    ingredient_consume_failed: "FABRICATION FAILED: Ingredient consume failed.",
-                    ship_definition_missing: "FABRICATION FAILED: Ship definition missing.",
-                    module_definition_missing: "FABRICATION FAILED: Module definition missing.",
-                    fabrication_failed: "FABRICATION FAILED: Internal fabrication error."
-                };
-                showNotification(reasonMap[result.error] || "FABRICATION FAILED: Internal fabrication error.", "error");
+                showNotification(getFabricationErrorMessage(result.error), "error");
                 return result;
             }
 
-            const nextInventory = (Array.isArray(result.cargo) ? result.cargo : gameState.inventory).map(item => hydrateItem(item));
-            const nextStorage = (Array.isArray(result.storage) ? result.storage : (gameState.storage?.[starportId] || [])).map(item => hydrateItem(item));
-            const nextOwnedShips = Array.isArray(result.ownedShips)
-                ? result.ownedShips.map(ship => hydrateVessel(ship, ship))
-                : gameState.ownedShips;
-            const nextCargoWeight = nextInventory.reduce((sum, i) => sum + (parseFloat(i.weight) || 0), 0);
-
-            setGameState(prev => ({
-                ...prev,
-                inventory: nextInventory,
-                storage: starportId ? { ...prev.storage, [starportId]: nextStorage } : prev.storage,
-                ownedShips: nextOwnedShips,
-                currentCargoWeight: nextCargoWeight,
-                credits: typeof result?.commanderState?.credits === 'number' ? result.commanderState.credits : prev.credits
-            }));
+            setGameState(prev => buildFabricationStateUpdate({
+                prev,
+                result,
+                starportId,
+                hydrateItem,
+                hydrateVessel
+            }).nextState);
 
             if (result?.commanderState && typeof result.commanderState.credits === 'number') {
                 window.dispatchEvent(new CustomEvent('sectorfall:commander_state', { detail: result.commanderState }));
             }
 
-            const craftedName = result?.output?.name || blueprintData?.outputId || 'Fabricated Item';
-            const craftedQl = Number(result?.avgQL || avgQL || 0).toFixed(1);
-            if (result?.output && result.output.isShip) {
-                showNotification(`Vessel Fabrication Complete: ${craftedName} [QL ${craftedQl}]`, 'success');
-            } else {
-                showNotification(`Hardware Fabrication Complete: ${craftedName} [QL ${craftedQl}]`, 'success');
-            }
-
+            showNotification(getFabricationSuccessMessage(result, blueprintData, avgQL), 'success');
             return result;
         } catch (err) {
             console.warn('[Fabricate][Client] backend fabricate failed', err);
@@ -11588,117 +11544,30 @@ backendSocket.sendUndock(
     };
 
     const handleRefine = (item, source, filteredIndex = -1) => {
-        const stationCapacity = 1000;
         const starportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
         if (!starportId) return;
-        
+
         setGameState(prev => {
-            const currentStationCargo = prev.storage[starportId] || [];
-            let nextInventory = [...prev.inventory];
-            let nextStationStorage = [...currentStationCargo];
+            const refineResult = buildRefineryStateUpdate({
+                prev,
+                starportId,
+                item,
+                source,
+                filteredIndex,
+                stationCapacity: 1000
+            });
 
-            const sourceItems = source === 'ship'
-                ? nextInventory.filter(i => i.type === 'resource' && !i.isRefined)
-                : nextStationStorage.filter(i => i.type === 'resource' && !i.isRefined);
-
-            const selectedItem = sourceItems[filteredIndex] || item;
-            if (!selectedItem) {
-                showNotification("SELECTED ORE STACK NOT FOUND", "error");
+            if (!refineResult.ok) {
+                showNotification(getRefineryErrorMessage(refineResult.error), 'error');
                 return prev;
             }
 
-            const itemWeight = parseFloat(selectedItem.weight) || (Number(selectedItem.amount || 0) * 0.1);
-            const currentStationWeight = currentStationCargo.reduce((sum, i) => sum + (parseFloat(i.weight) || 5), 0);
-            
-            // Check station capacity
-            if (currentStationWeight + itemWeight > stationCapacity) {
-                showNotification("STARPORT STORAGE BAY AT CAPACITY", "error");
-                return prev;
-            }
+            cloudService.saveInventoryState(cloudUser.id, starportId, refineResult.nextStationStorage, 'refineOre');
+            showNotification(`Refining Complete: ${refineResult.refinedAmount} units of ${refineResult.refinedName} produced at QL ${refineResult.refinedQL}.`, 'success');
 
-            // A. Rename the Resource (e.g., "Refined Silicite")
-            const oreType = selectedItem.oreType || selectedItem.name.split(' [')[0].replace(/ Ore/i, '');
-            const refinedName = `Refined ${oreType}`;
-            
-            // B. QL-Based Refining Output: Average calculation from the Unit List
-            let refinedQL = 1;
-            if (selectedItem.qlList && selectedItem.qlList.length > 0) {
-                const sum = selectedItem.qlList.reduce((a, b) => a + b, 0);
-                // Calculate precise average
-                refinedQL = Number((sum / selectedItem.qlList.length).toFixed(1));
-                console.log(`[Refinery] Averaging ${selectedItem.qlList.length} units. Sum: ${sum}, Resulting QL: ${refinedQL}`);
-            } else {
-                // Fallback to band-average if list missing
-                if (typeof selectedItem.qlBand === 'string' && selectedItem.qlBand.includes('-')) {
-                    const parts = selectedItem.qlBand.split('-').map(p => parseInt(p.trim()));
-                    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-                        refinedQL = Math.floor((parts[0] + parts[1]) / 2);
-                    }
-                } else if (!isNaN(parseInt(selectedItem.qlBand))) {
-                    refinedQL = parseInt(selectedItem.qlBand);
-                }
-            }
-            
-            const refinedAmount = Math.floor(Number(selectedItem.amount || 0) * 0.75);
-            
-            // D. Remove only the exact selected raw ore stack & add refined resource
-            if (source === 'ship') {
-                const selectedIndex = nextInventory.indexOf(selectedItem);
-                if (selectedIndex === -1) {
-                    showNotification("SELECTED SHIP ORE STACK NOT FOUND", "error");
-                    return prev;
-                }
-                nextInventory.splice(selectedIndex, 1);
-            } else {
-                const selectedIndex = nextStationStorage.indexOf(selectedItem);
-                if (selectedIndex === -1) {
-                    showNotification("SELECTED STORAGE ORE STACK NOT FOUND", "error");
-                    return prev;
-                }
-                nextStationStorage.splice(selectedIndex, 1);
-            }
-
-            const existingInStorage = nextStationStorage.find(i => 
-                i.isRefined && 
-                i.oreType === oreType &&
-                i.qlBand === refinedQL
-            );
-
-            if (existingInStorage) {
-                existingInStorage.amount += refinedAmount;
-                existingInStorage.weight = (parseFloat(existingInStorage.weight) + itemWeight).toFixed(1);
-            } else {
-                const refinedItem = {
-                    id: `${refinedName}-Refined-QL-${refinedQL}-${Date.now()}`,
-                    name: `${refinedName} [QL ${refinedQL}]`,
-                    oreType: oreType,
-                    type: 'resource',
-                    isRefined: true,
-                    amount: refinedAmount,
-                    weight: itemWeight.toFixed(1), 
-                    qlBand: refinedQL, 
-                    rarity: selectedItem.rarity || 'common',
-                    description: `High-purity ${oreType}. Refined to an exact average quality of ${refinedQL} from ${selectedItem.qlList?.length || 'legacy'} raw units.`
-                };
-                nextStationStorage.push(refinedItem);
-            }
-
-            // Recalculate ship weight if source was ship
-            const nextShipWeight = nextInventory.reduce((sum, i) => sum + (parseFloat(i.weight) || 0), 0);
-
-            // AUTHORITATIVE PUSH
-            cloudService.saveInventoryState(cloudUser.id, starportId, nextStationStorage, "refineOre");
-
-            showNotification(`Refining Complete: ${refinedAmount} units of ${refinedName} produced at QL ${refinedQL}.`, "success");
-
-            return {
-                ...prev,
-                inventory: nextInventory,
-                storage: { ...prev.storage, [starportId]: nextStationStorage },
-                currentCargoWeight: nextShipWeight
-            };
+            return refineResult.nextState;
         });
-        };   // ← ADD THIS LINE
+    };
 
 
     const subButtons = [
