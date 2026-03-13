@@ -11,8 +11,8 @@ import { ITEM_CATALOG } from './data/items/catalog.js';
 import { createItemInstance, deriveItemIdFromBlueprint } from './data/items/items.helpers.js';
 import { validateItemBlueprintIntegrity } from './data/items/validate.js';
 import { resolveShipId, resolveShipRegistryKey } from './data/ships/catalog.js';
-import { getShipDisplayName, getShipClassLabel, buildHangarShipRecord } from './features/hangar/hangarHelpers.js';
-import { requestShipActivation, repairShipAtStarport, transferShipToHangar, transferShipFromHangar } from './features/hangar/HangarService.js';
+import { getShipDisplayName, getShipClassLabel, resolveCurrentStarportId } from './features/hangar/hangarHelpers.js';
+import { requestShipActivation, repairShipAtStarport, transferShipToHangar, transferShipFromHangar, loadDockedStarportData } from './features/hangar/HangarService.js';
 import { cloudService } from './CloudService.js';
 import { supabase } from './supabaseClient.js';
 import { chatService } from './chat/ChatService.js';
@@ -9617,32 +9617,21 @@ if (gameManagerRef.current) {
 }
         // system_id now comes ONLY from EC2 spawn packet
 let targetSystemId = STARPORT_TO_SYSTEM[lastStationId] || 'cygnus-prime';
-        const currentStarportId = SYSTEM_TO_STARPORT[targetSystemId];
+        const currentStarportId = resolveCurrentStarportId(targetSystemId, SYSTEM_TO_STARPORT);
         await gameManagerRef.current.loadSystem(targetSystemId, currentStarportId);
 
         setIsDocked(localCache ? localCache.isDocked : true);
         const dockedAtStarport = localCache ? localCache.isDocked : true;
 
         // 6. Load Regional Storage and Hangar if docked
-        let stationStorage = [];
-        let hangarShips = [];
-        if (dockedAtStarport) {
-            if (currentStarportId) {
-                const [inventoryState, hangarData] = await Promise.all([
-                    cloudService.getInventoryState(playerId, currentStarportId),
-                    cloudService.getHangarShips(playerId, currentStarportId)
-                ]);
-                
-                if (inventoryState) {
-                    stationStorage = (Array.isArray(inventoryState.items) ? inventoryState.items : [])
-                        .filter(i => i.type !== 'ship' && !i.isShip)
-                        .map(hydrateItem);
-                }
-                if (hangarData) {
-                    hangarShips = (hangarData || []).map(h => buildHangarShipRecord(h, { hydrateVessel, fallbackShipType: 'OMNI SCOUT' }));
-                }
-            }
-        }
+        const { stationStorage, hangarShips } = await loadDockedStarportData({
+            isDocked: dockedAtStarport,
+            playerId,
+            starportId: currentStarportId,
+            cloudService,
+            hydrateItem,
+            hydrateVessel
+        });
 
         const actualSystemData = SYSTEMS_REGISTRY[targetSystemId];
         const systemInfo = {
@@ -9793,17 +9782,21 @@ let targetSystemId = STARPORT_TO_SYSTEM[lastStationId] || 'cygnus-prime';
         // Refresh Starport Data when docking
         if (isDocked && cloudService.user) {
             const currentSystemId = gameState.currentSystem?.id;
-            const starportId = SYSTEM_TO_STARPORT[currentSystemId];
+            const starportId = resolveCurrentStarportId(currentSystemId, SYSTEM_TO_STARPORT);
             if (starportId) {
                 (async () => {
-                    const [inventoryState, hangarData] = await Promise.all([
-                        cloudService.getInventoryState(cloudService.user.id, starportId),
-                        cloudService.getHangarShips(cloudService.user.id, starportId)
-                    ]);
-                    
+                    const { stationStorage, hangarShips } = await loadDockedStarportData({
+                        isDocked: true,
+                        playerId: cloudService.user.id,
+                        starportId,
+                        cloudService,
+                        hydrateItem,
+                        hydrateVessel
+                    });
+
                     setGameState(prev => ({ ...prev,
-                        storage: { ...prev.storage, [starportId]: (Array.isArray(inventoryState?.items) ? inventoryState.items : []).filter(i => i.type !== 'ship' && !i.isShip) },
-                        hangarShips: (hangarData || []).map(h => buildHangarShipRecord(h, { hydrateVessel, fallbackShipType: 'OMNI SCOUT' }))
+                        storage: { ...prev.storage, [starportId]: stationStorage },
+                        hangarShips
                     }));
                 })();
             }

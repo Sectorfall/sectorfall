@@ -63,3 +63,9 @@ export const buildHangarShipRecord = (hangarRow, options = {}) => {
 
   return typeof hydrateVessel === 'function' ? hydrateVessel(baseRecord, baseRecord) : baseRecord;
 };
+
+
+export const resolveCurrentStarportId = (systemId, systemToStarport = {}) => {
+  const key = String(systemId || '').trim();
+  return key ? (systemToStarport[key] || null) : null;
+};

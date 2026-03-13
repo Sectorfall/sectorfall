@@ -1,3 +1,5 @@
+import { buildHangarShipRecord } from './hangarHelpers.js';
+
 export const requestShipActivation = async ({
   ship,
   isDocked,
@@ -241,4 +243,34 @@ export const transferShipFromHangar = async ({
     console.error('[HangarService] transferShipFromHangar failed', err);
     showNotification('TRANSFER FAILED: Could not remove from hangar.', 'error');
   }
+};
+
+
+export const loadDockedStarportData = async ({
+  isDocked,
+  playerId,
+  starportId,
+  cloudService,
+  hydrateItem,
+  hydrateVessel
+}) => {
+  if (!isDocked || !playerId || !starportId) {
+    return { stationStorage: [], hangarShips: [] };
+  }
+
+  const [inventoryState, hangarData] = await Promise.all([
+    cloudService.getInventoryState(playerId, starportId),
+    cloudService.getHangarShips(playerId, starportId)
+  ]);
+
+  const stationStorage = (Array.isArray(inventoryState?.items) ? inventoryState.items : [])
+    .filter(i => i.type !== 'ship' && !i.isShip)
+    .map(item => (typeof hydrateItem === 'function' ? hydrateItem(item) : item));
+
+  const hangarShips = (hangarData || []).map(h => buildHangarShipRecord(h, {
+    hydrateVessel,
+    fallbackShipType: 'OMNI SCOUT'
+  }));
+
+  return { stationStorage, hangarShips };
 };
