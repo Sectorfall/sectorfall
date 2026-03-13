@@ -31,6 +31,7 @@ import { applyInstallFittingState, applyUnfitFittingState } from './features/fit
 import { useFittingState, buildFittingSelectMenuProps } from './features/fitting/fittingState.js';
 import { getFormattedFittingTitle, getFittingHardwareTitle, evaluateFittingCandidate, buildInstallFittingWarning } from './features/fitting/fittingPreview.js';
 import { canItemsStackForTransfer, mergeTransferredItemIntoList, removeSingleTransferredItemFromList, calculateCargoTotals } from './features/inventory/inventoryHelpers.js';
+import { useCargoMenuState } from './features/inventory/inventoryState.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -3330,23 +3331,15 @@ const SystemMenu = ({ gameState, onClose, inArena = false, onLeaveArena = null, 
 };
 
 const CargoMenu = ({ gameState, onClose }) => {
-    const [selectedItem, setSelectedItem] = useState(null);
-    const [filter, setFilter] = useState('everything'); // everything, blueprint, module, resource, bio-material
-    const cargoItems = gameState.inventory || [];
-
-    const filteredItems = cargoItems.filter(item => {
-        if (filter === 'everything') return true;
-        if (filter === 'module') {
-            return item.type === 'module' || item.type === 'weapon' || item.type === 'shield' || item.type === 'thruster' || item.type === 'mining';
-        }
-        if (filter === 'bio-material') {
-            return item.type === 'bio-material';
-        }
-        return item.type === filter;
-    });
-
-    const filteredWeight = filteredItems.reduce((sum, item) => sum + (item.weight || 0), 0);
-    const capacityPercent = (gameState.currentCargoWeight / gameState.cargoHold) * 100;
+    const {
+        selectedItem,
+        setSelectedItem,
+        filter,
+        setFilter,
+        filteredItems,
+        filteredWeight,
+        capacityPercent
+    } = useCargoMenuState(gameState);
 
     return React.createElement('div', {
         style: {
@@ -3410,7 +3403,6 @@ const CargoMenu = ({ gameState, onClose }) => {
                         key: type,
                         onClick: () => {
                             setFilter(type);
-                            setSelectedItem(null);
                         },
                         style: {
                             flex: '1 0 auto',
