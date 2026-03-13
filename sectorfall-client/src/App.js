@@ -2277,7 +2277,8 @@ const ActionButton = ({ module, slotId, cooldown, active, weaponState, onTrigger
         if (!module) return React.createElement(IconWeaponPlaceholder, { color: '#555', opacity: 0.3 });
         if (slotId.startsWith('engine')) return React.createElement(IconEngine, { color: color });
         if (slotId.startsWith('active')) return React.createElement(IconShieldSlot, { color: color });
-        if (module.name.toLowerCase().includes('laser')) {
+        const moduleNameLower = String(module?.name || module?.displayName || module?.display_name || module?.module_id || module?.item_id || '').toLowerCase();
+        if (moduleNameLower.includes('laser')) {
             return React.createElement(IconWeaponLaser, { color: color });
         }
         return React.createElement(IconWeaponPlaceholder, { color: color, opacity: 1 });
@@ -2294,7 +2295,8 @@ const ActionButton = ({ module, slotId, cooldown, active, weaponState, onTrigger
     // Cooldown Normalization for Seeker Pods and standard weapons
     let cooldownPercent = 0;
     let showTimer = false;
-    const isMissile = effectiveModule?.name?.toLowerCase().includes('seeker pod');
+    const effectiveModuleName = String(effectiveModule?.name || effectiveModule?.displayName || effectiveModule?.display_name || effectiveModule?.module_id || effectiveModule?.item_id || '').toLowerCase();
+    const isMissile = effectiveModuleName.includes('seeker pod');
     if (cooldown > 0) {
         let maxCooldown = 1.0; // Default fallback
         if (isMissile) {
@@ -6695,8 +6697,8 @@ const StationInterior = ({
         maxEnergy: numOr(gameState.maxEnergy, numOr(selectedShip.maxEnergy, numOr(selectedShip.energy, 0))),
         armor: numOr(gameState.armor, 0),
         resistances: (gameState.resistances && typeof gameState.resistances === 'object') ? gameState.resistances : {},
-        combat_stats: (gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combat_stats && typeof selectedShip.combat_stats === 'object') ? selectedShip.combat_stats : null),
-        combatStats: (gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combatStats && typeof selectedShip.combatStats === 'object') ? selectedShip.combatStats : null),
+        combat_stats: (gameState.combatStats && typeof gameState.combatStats === 'object') ? gameState.combatStats : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combat_stats && typeof selectedShip.combat_stats === 'object') ? selectedShip.combat_stats : null)),
+        combatStats: (gameState.combatStats && typeof gameState.combatStats === 'object') ? gameState.combatStats : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combatStats && typeof selectedShip.combatStats === 'object') ? selectedShip.combatStats : null)),
         fittings: gameState.fittings || selectedShip.fittings || {}
     } : {
         ...selectedShip,
@@ -7199,7 +7201,7 @@ const StationInterior = ({
                         React.createElement('div', { style: { display: 'flex', gap: '10px', marginTop: '10px' } },
                             React.createElement('button', {
                                 onClick: () => {
-                                    if (selectedShip.id !== gameState.activeShipId) onCommandShip(selectedShip.id);
+                                    if (telemetryShip.id !== gameState.activeShipId) onCommandShip(telemetryShip.id);
                                     onOpenFitting();
                                 },
                                 style: {
@@ -7224,7 +7226,7 @@ const StationInterior = ({
                             numOr(telemetryShip?.hp, 0) < numOr(telemetryShip?.maxHp, (SHIP_REGISTRY[telemetryShip?.type]?.hp || 0)) && React.createElement('button', {
                                 onClick: (e) => { 
                                     e.stopPropagation(); 
-                                    setRepairMenuShipId(selectedShip.id); 
+                                    setRepairMenuShipId(telemetryShip.id); 
                                     setRepairProgress(100); 
                                 },
                                 style: {
@@ -9266,12 +9268,36 @@ useEffect(() => {
 
 useEffect(() => {
     const sanitizeAuthoritativeFittings = (...candidates) => {
+        const activeShipRecord = (gameState.ownedShips || []).find((ship) => ship && ship.id === gameState.activeShipId)
+            || (gameState.hangarShips || []).find((ship) => ship && ship.id === gameState.activeShipId)
+            || null;
+        const activeShipType = resolveShipId(gameState.shipClass || activeShipRecord?.type || gameState.activeShipId) || activeShipRecord?.type || null;
+        const registryKey = resolveShipRegistryKey(activeShipType) || activeShipType;
+        const registryConfig = (registryKey && SHIP_REGISTRY[registryKey]) || (activeShipType && SHIP_REGISTRY[activeShipType]) || null;
+        const allowedSlotIds = Object.keys(registryConfig?.fittings || {});
+
+        if (!allowedSlotIds.length) {
+            for (const candidate of candidates) {
+                if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+                    return candidate;
+                }
+            }
+            return {};
+        }
+
+        const next = {};
+        for (const slotId of allowedSlotIds) next[slotId] = null;
+
         for (const candidate of candidates) {
-            if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-                return candidate;
+            if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+            for (const slotId of allowedSlotIds) {
+                if (Object.prototype.hasOwnProperty.call(candidate, slotId)) {
+                    next[slotId] = candidate[slotId] == null ? null : hydrateFittedModule(candidate[slotId]);
+                }
             }
         }
-        return {};
+
+        return next;
     };
 
     const onAuthoritativeShipState = (event) => {
