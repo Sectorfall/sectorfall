@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 export function useTradeHubState(gameState, deps) {
-    const { cloudService, supabase, MarketSystem, SYSTEMS_REGISTRY, SYSTEM_TO_STARPORT } = deps;
+    const { cloudService, MarketSystem, SYSTEMS_REGISTRY, SYSTEM_TO_STARPORT } = deps;
 
     const [activeTab, setActiveTab] = useState('browser');
     const [activeRightTab, setActiveRightTab] = useState('inventory');
@@ -26,7 +26,13 @@ export function useTradeHubState(gameState, deps) {
     const currentStarportId = SYSTEM_TO_STARPORT[currentSystemId];
 
     useEffect(() => {
-        if (!currentStarportId) return;
+        if (!currentStarportId) {
+            setNewMarketListings([]);
+            setNewBuyOrders([]);
+            return;
+        }
+
+        let isCancelled = false;
 
         const fetchMarketData = async () => {
             if (marketFilter === 'commodities' || marketFilter === 'auctions') {
@@ -34,45 +40,41 @@ export function useTradeHubState(gameState, deps) {
 
                 try {
                     const result = await MarketSystem.fetchMarketData(currentStarportId, marketFilter);
-                    if (result.listings) setNewMarketListings(result.listings);
+                    if (!isCancelled) {
+                        setNewMarketListings(result.listings || []);
+                        setNewBuyOrders([]);
+                    }
                 } catch (e) {
+                    if (!isCancelled) {
+                        setNewMarketListings([]);
+                    }
                     console.warn('[TradeHub] Market fetch error:', e);
                 }
             } else if (marketFilter === 'buy_orders') {
                 try {
                     const result = await MarketSystem.fetchMarketData(currentStarportId, marketFilter);
-                    if (result.buyOrders) setNewBuyOrders(result.buyOrders);
+                    if (!isCancelled) {
+                        setNewBuyOrders(result.buyOrders || []);
+                        setNewMarketListings([]);
+                    }
                 } catch (e) {
+                    if (!isCancelled) {
+                        setNewBuyOrders([]);
+                    }
                     console.warn('[TradeHub] Buy order fetch error:', e);
                 }
+            } else {
+                setNewMarketListings([]);
+                setNewBuyOrders([]);
             }
         };
 
         fetchMarketData();
 
-        const listingChannel = supabase.channel('market_listings_updates')
-            .on('postgres_changes', {
-                event: '*',
-                schema: 'public',
-                table: 'market_listings',
-                filter: `starport_id=eq.${currentStarportId}`
-            }, () => fetchMarketData())
-            .subscribe();
-
-        const buyOrderChannel = supabase.channel('market_buy_orders_updates')
-            .on('postgres_changes', {
-                event: '*',
-                schema: 'public',
-                table: 'market_buy_orders',
-                filter: `starport_id=eq.${currentStarportId}`
-            }, () => fetchMarketData())
-            .subscribe();
-
         return () => {
-            supabase.removeChannel(listingChannel);
-            supabase.removeChannel(buyOrderChannel);
+            isCancelled = true;
         };
-    }, [marketFilter, currentStarportId, MarketSystem, supabase]);
+    }, [marketFilter, currentStarportId, MarketSystem]);
 
     let listings = [];
     if (marketFilter === 'contracts') {
