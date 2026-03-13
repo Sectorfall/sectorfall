@@ -13,6 +13,7 @@ import { validateItemBlueprintIntegrity } from './data/items/validate.js';
 import { resolveShipId, resolveShipRegistryKey } from './data/ships/catalog.js';
 import { getShipDisplayName, getShipClassLabel, resolveCurrentStarportId } from './features/hangar/hangarHelpers.js';
 import { requestShipActivation, repairShipAtStarport, transferShipToHangar, transferShipFromHangar, loadDockedStarportData } from './features/hangar/HangarService.js';
+import { useStationInteriorHangarState } from './features/hangar/hangarState.js';
 import { cloudService } from './CloudService.js';
 import { supabase } from './supabaseClient.js';
 import { chatService } from './chat/ChatService.js';
@@ -6637,54 +6638,20 @@ const StationInterior = ({
     onCreateContract, onAcceptContract, onPickupPackage, onDeliverPackage, onCancelListing, onCancelContract,
     onActivateShip, onDepositShip
 }) => {
-    const [view, setView] = useState('hangar');
-    const [repairMenuShipId, setRepairMenuShipId] = useState(null);
-    const [repairProgress, setRepairProgress] = useState(0); // Percentage of missing HP to repair
-    const [selectedShipId, setSelectedShipId] = useState(gameState.activeShipId);
-    
-    // Ensure selected ship is valid or fallback to active ship
-    // Combine fleet + hangar, but never show duplicates if the same ship exists in both lists.
-    const activeOwnedShip = (gameState.ownedShips || []).find(s => s && s.id === gameState.activeShipId) || null;
-    const allShips = [
-        ...(activeOwnedShip ? [activeOwnedShip] : []),
-        ...(gameState.hangarShips || []),
-        ...((gameState.ownedShips || []).filter(s => s && s.id !== gameState.activeShipId))
-    ].filter((s, idx, arr) => s && arr.findIndex(t => t && t.id === s.id) === idx);
-    const selectedShip = allShips.find(s => s.id === selectedShipId) || 
-                       allShips.find(s => s.id === gameState.activeShipId) ||
-                       allShips[0];
-    const selectedShipIsActive = Boolean(selectedShip && selectedShip.id === gameState.activeShipId);
-    const telemetryShip = selectedShip ? (selectedShipIsActive ? {
-        ...selectedShip,
-        type: resolveShipId(gameState.shipClass || selectedShip.type) || selectedShip.type,
-        hp: numOr(gameState.hp, numOr(selectedShip.hp, 0)),
-        maxHp: numOr(gameState.maxHp, numOr(selectedShip.maxHp, numOr(selectedShip.hp, 0))),
-        shields: numOr(gameState.shields, numOr(selectedShip.shields, 0)),
-        maxShields: numOr(gameState.maxShields, numOr(selectedShip.maxShields, numOr(selectedShip.shields, 0))),
-        energy: numOr(gameState.energy, numOr(selectedShip.energy, 0)),
-        maxEnergy: numOr(gameState.maxEnergy, numOr(selectedShip.maxEnergy, numOr(selectedShip.energy, 0))),
-        armor: numOr(gameState.armor, 0),
-        resistances: (gameState.resistances && typeof gameState.resistances === 'object') ? gameState.resistances : {},
-        combat_stats: (gameState.combatStats && typeof gameState.combatStats === 'object') ? gameState.combatStats : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combat_stats && typeof selectedShip.combat_stats === 'object') ? selectedShip.combat_stats : null)),
-        combatStats: (gameState.combatStats && typeof gameState.combatStats === 'object') ? gameState.combatStats : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combatStats && typeof selectedShip.combatStats === 'object') ? selectedShip.combatStats : null)),
-        fittings: gameState.fittings || selectedShip.fittings || {}
-    } : {
-        ...selectedShip,
-        type: resolveShipId(selectedShip.type) || selectedShip.type,
-        armor: 0,
-        resistances: {},
-        combat_stats: null,
-        combatStats: null,
-        kineticRes: 0,
-        thermalRes: 0,
-        blastRes: 0
-    }) : null;
-    
-    useEffect(() => {
-        if (!selectedShipId && gameState.activeShipId) {
-            setSelectedShipId(gameState.activeShipId);
-        }
-    }, [gameState.activeShipId]);
+    const {
+        view,
+        setView,
+        repairMenuShipId,
+        setRepairMenuShipId,
+        repairProgress,
+        setRepairProgress,
+        selectedShipId,
+        setSelectedShipId,
+        allShips,
+        selectedShip,
+        selectedShipIsActive,
+        telemetryShip
+    } = useStationInteriorHangarState(gameState);
     return React.createElement('div', {
         style: {
             position: 'absolute',
