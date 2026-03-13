@@ -5217,6 +5217,7 @@ const TradeHub = ({
 
     const [bidAmount, setBidAmount] = useState('');
     const [buyQuantity, setBuyQuantity] = useState(1);
+    const userId = cloudService?.user?.id || null;
 
     const handleSelectListing = (listing) => {
         if (marketFilter === 'contracts') {
