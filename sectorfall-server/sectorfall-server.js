@@ -1638,27 +1638,38 @@ const FITTINGS_SLOT_SCHEMA = {
   synapse3: null
 };
 
-function sanitizeRuntimeFittings(value) {
-  return (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
+function getAllowedFittingsSchemaForShip(shipType = null) {
+  const ship = shipType ? getShipContentByAnyId(shipType) : null;
+  const shipFittings = (ship?.fittings && typeof ship.fittings === 'object' && !Array.isArray(ship.fittings))
+    ? ship.fittings
+    : null;
+  if (shipFittings) {
+    const schema = {};
+    for (const slotId of Object.keys(shipFittings)) schema[slotId] = null;
+    return schema;
+  }
+  return { ...FITTINGS_SLOT_SCHEMA };
 }
 
-function normalizeFittingsSchema(fittings) {
-  const source = sanitizeRuntimeFittings(fittings);
-  const normalized = { ...FITTINGS_SLOT_SCHEMA };
-  for (const [slotId, value] of Object.entries(source)) {
-    normalized[slotId] = value ?? null;
-  }
-  for (const slotId of Object.keys(FITTINGS_SLOT_SCHEMA)) {
-    if (!Object.prototype.hasOwnProperty.call(normalized, slotId)) {
-      normalized[slotId] = null;
+function sanitizeRuntimeFittings(value, shipType = null) {
+  const source = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
+  const allowedSchema = getAllowedFittingsSchemaForShip(shipType);
+  const normalized = { ...allowedSchema };
+  for (const slotId of Object.keys(allowedSchema)) {
+    if (Object.prototype.hasOwnProperty.call(source, slotId)) {
+      normalized[slotId] = source[slotId] ?? null;
     }
   }
   return normalized;
 }
 
-function enrichRuntimeFittingsWithModuleAuthority(value) {
-  const fittings = normalizeFittingsSchema(value);
-  const enriched = { ...FITTINGS_SLOT_SCHEMA };
+function normalizeFittingsSchema(fittings, shipType = null) {
+  return sanitizeRuntimeFittings(fittings, shipType);
+}
+
+function enrichRuntimeFittingsWithModuleAuthority(value, shipType = null) {
+  const fittings = normalizeFittingsSchema(value, shipType);
+  const enriched = { ...getAllowedFittingsSchemaForShip(shipType) };
   for (const [slotId, rawItem] of Object.entries(fittings)) {
     if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
       enriched[slotId] = rawItem ?? null;
@@ -3618,9 +3629,9 @@ function applyHydratedPlayerCombatStats(player, { sourceState = null, preserveCu
     sourceState: sourceState || null,
     preserveCurrent
   });
-  player.fittings = normalizeFittingsSchema(player.fittings);
-  player.fittings = enrichRuntimeFittingsWithModuleAuthority(player.fittings);
-  player.fittings = normalizeFittingsSchema(player.fittings);
+  player.fittings = normalizeFittingsSchema(player.fittings, player?.ship_type || sourceState?.ship_type || sourceState?.shipType || null);
+  player.fittings = enrichRuntimeFittingsWithModuleAuthority(player.fittings, player?.ship_type || sourceState?.ship_type || sourceState?.shipType || null);
+  player.fittings = normalizeFittingsSchema(player.fittings, player?.ship_type || sourceState?.ship_type || sourceState?.shipType || null);
   console.log('[COMBAT APPLY] after enrich', {
     userId: player?.userId || player?.id || null,
     fittings: player?.fittings || {}
@@ -3674,7 +3685,7 @@ async function hydratePlayerFromCommanderActiveShip(player, { fillVitals = false
   player.ship_type = selectedShipType;
   player.active_ship_instance_id = activeShipId;
   player.current_ship_instance_id = activeShipId;
-  player.fittings = sanitizeRuntimeFittings(hangarShipConfig.fittings);
+  player.fittings = sanitizeRuntimeFittings(hangarShipConfig.fittings, selectedShipType);
   if (hangarShipConfig.visual_config && typeof hangarShipConfig.visual_config === 'object' && !Array.isArray(hangarShipConfig.visual_config)) {
     player.visual_config = hangarShipConfig.visual_config;
   }
@@ -4344,7 +4355,7 @@ function buildOwnedShipEntryFromHangarRow(row) {
     type: canonicalHullId,
     hull_id: canonicalHullId,
     hullTemplateId: canonicalHullId,
-    fittings: sanitizeRuntimeFittings(cfg.fittings || {}),
+    fittings: sanitizeRuntimeFittings(cfg.fittings || {}, canonicalHullId),
     hp: Math.max(0, finiteNum(cfg.hp, 0)),
     maxHp: Math.max(1, finiteNum(cfg.maxHp, cfg.hp ?? 1)),
     shields: Math.max(0, finiteNum(cfg.shields, 0)),
@@ -4436,7 +4447,7 @@ async function ensureHangarShipRecord(player, shipInstanceId, vitalsOverride = n
     maxShields: Math.max(0, finiteNum(nextMaxShields, baseMaxShields)),
     energy: Math.max(0, Math.min(finiteNum(nextEnergy, nextMaxEnergy), Math.max(0, finiteNum(nextMaxEnergy, baseMaxEnergy)))),
     maxEnergy: Math.max(0, finiteNum(nextMaxEnergy, baseMaxEnergy)),
-    fittings: sanitizeRuntimeFittings(nextFittings || {})
+    fittings: sanitizeRuntimeFittings(nextFittings || {}, canonicalHullId)
   };
 
   if (player.visual_config && typeof player.visual_config === 'object' && !Array.isArray(player.visual_config)) {
@@ -4504,7 +4515,7 @@ async function persistShipInstanceToHangar(player, shipInstanceId, vitalsOverrid
       maxShields: Math.max(0, finiteNum(nextMaxShields, hangarRow?.ship_config?.maxShields ?? hangarRow?.ship_config?.shields ?? 0)),
       energy: Math.max(0, finiteNum(nextEnergy, hangarRow?.ship_config?.energy ?? 0)),
       maxEnergy: Math.max(0, finiteNum(nextMaxEnergy, hangarRow?.ship_config?.maxEnergy ?? hangarRow?.ship_config?.energy ?? 0)),
-      fittings: sanitizeRuntimeFittings(nextFittings || hangarRow?.ship_config?.fittings || {})
+      fittings: sanitizeRuntimeFittings(nextFittings || hangarRow?.ship_config?.fittings || {}, canonicalHullId)
     };
 
     const { error } = await supabase
@@ -6232,7 +6243,7 @@ async function handleCommanderRepairShip(socket, data) {
       hullTemplateId: normalizeCanonicalShipId(shipRecord?.hull_id || shipRecord?.ship_config?.ship_id || shipRecord?.ship_config?.type || shipRecord?.ship_config?.ship_type || null),
       hp: nextHp,
       maxHp: maxHp,
-      fittings: sanitizeRuntimeFittings(shipRecord?.ship_config?.fittings || {})
+      fittings: sanitizeRuntimeFittings(shipRecord?.ship_config?.fittings || {}, updatedShipConfig?.ship_id || updatedShipConfig?.type || shipRecord?.hull_id || null)
     };
     const { error } = await supabase
       .from("hangar_states")
@@ -7574,7 +7585,7 @@ async function handleHello(socket, data) {
       hp: 100, maxHp: 100,
       shields: 0, maxShields: 0,
       energy: 100, maxEnergy: 100,
-      fittings: sanitizeRuntimeFittings(state?.fittings),
+      fittings: sanitizeRuntimeFittings(state?.fittings, state?.ship_type || state?.shipType || 'ship_omni_scout'),
       visual_config: sanitizeRuntimeVisualConfig(state?.visual_config),
       animation_state: sanitizeRuntimeAnimationState(state?.telemetry?.animation_state),
 
@@ -7651,7 +7662,7 @@ async function handleHello(socket, data) {
       maxShields: state.maxShields ?? 0,
       energy: state.energy ?? 100,
       maxEnergy: state.maxEnergy ?? 100,
-      fittings: sanitizeRuntimeFittings(state?.fittings),
+      fittings: sanitizeRuntimeFittings(state?.fittings, state?.ship_type || state?.shipType || 'ship_omni_scout'),
       visual_config: sanitizeRuntimeVisualConfig(state?.visual_config),
       animation_state: sanitizeRuntimeAnimationState(state?.telemetry?.animation_state),
 
@@ -7709,7 +7720,7 @@ async function handleHello(socket, data) {
       maxShields: state.maxShields ?? 0,
       energy: state.energy ?? 100,
       maxEnergy: state.maxEnergy ?? 100,
-      fittings: sanitizeRuntimeFittings(state?.fittings),
+      fittings: sanitizeRuntimeFittings(state?.fittings, state?.ship_type || state?.shipType || 'ship_omni_scout'),
       visual_config: sanitizeRuntimeVisualConfig(state?.visual_config),
       animation_state: sanitizeRuntimeAnimationState(state?.telemetry?.animation_state),
 
@@ -7782,7 +7793,7 @@ async function handleHello(socket, data) {
       maxShields: state.maxShields ?? 0,
       energy: state.energy ?? 100,
       maxEnergy: state.maxEnergy ?? 100,
-      fittings: sanitizeRuntimeFittings(state?.fittings),
+      fittings: sanitizeRuntimeFittings(state?.fittings, state?.ship_type || state?.shipType || 'ship_omni_scout'),
       visual_config: sanitizeRuntimeVisualConfig(state?.visual_config),
       animation_state: sanitizeRuntimeAnimationState(state?.telemetry?.animation_state),
 
@@ -8137,7 +8148,7 @@ async function handleUndock(socket, data) {
     }
   }
 
-  const preservedFittings = sanitizeRuntimeFittings(player.fittings || state?.fittings || {});
+  const preservedFittings = sanitizeRuntimeFittings(player.fittings || state?.fittings || {}, player.ship_type || state?.ship_type || state?.shipType || 'ship_omni_scout');
 
   player.docked = false;
   player.destroyed = false;
@@ -8167,7 +8178,7 @@ async function handleUndock(socket, data) {
   // Rebuild fittings/combat stats and vitals from the selected active ship instance.
   await hydratePlayerFromCommanderActiveShip(player, { fillVitals: false, persistState: false });
 
-  player.fittings = sanitizeRuntimeFittings(player.fittings || preservedFittings || {});
+  player.fittings = sanitizeRuntimeFittings(player.fittings || preservedFittings || {}, player.ship_type || state?.ship_type || state?.shipType || 'ship_omni_scout');
 
   const hydratedHp = finiteNum(player.hp, finiteNum(player.maxHp, 0));
   const hydratedShields = finiteNum(player.shields, finiteNum(player.maxShields, 0));
@@ -8621,7 +8632,7 @@ function handleTelemetry(socket, data) {
   };
 
   const anim = sanitizeRuntimeAnimationState(data.animation_state);
-  const fittings = sanitizeRuntimeFittings(data.fittings);
+  const fittings = sanitizeRuntimeFittings(data.fittings, player.ship_type || 'ship_omni_scout');
   const visual_config = sanitizeRuntimeVisualConfig(data.visual_config);
   if (anim) player.animation_state = anim;
   let fittingsChanged = false;

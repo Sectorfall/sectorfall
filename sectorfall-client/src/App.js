@@ -26,7 +26,7 @@ import { GameStateProvider, useGameState } from './state/GameState.js';
 import { ArenaMenu } from './arena/ArenaMenu.js';
 import { PveBattlegroundMenu } from './battlegrounds/PveBattlegroundMenu.js';
 import { createAuthoritativeShipStateHandler } from './features/hangar/authoritativeShipSync.js';
-import { getModuleResourceUsage, getLiveShipResources, getSlotClass, getItemSlotClass, normalizeModuleFamilyKey, normalizeModuleSizeKey, normalizeModuleRarityKey, deriveCanonicalModuleId, normalizeFittedModuleIdentity, hydrateFittedModule, canFit } from './features/fitting/fittingHelpers.js';
+import { getModuleResourceUsage, getLiveShipResources, getSlotClass, getItemSlotClass, normalizeModuleFamilyKey, normalizeModuleSizeKey, normalizeModuleRarityKey, deriveCanonicalModuleId, normalizeFittedModuleIdentity, hydrateFittedModule, canFit, getVisualFittingSlotsForShip } from './features/fitting/fittingHelpers.js';
 import { applyInstallFittingState, applyUnfitFittingState } from './features/fitting/fittingActions.js';
 import { useFittingState, buildFittingSelectMenuProps } from './features/fitting/fittingState.js';
 import { getFormattedFittingTitle, getFittingHardwareTitle, evaluateFittingCandidate, buildInstallFittingWarning } from './features/fitting/fittingPreview.js';
@@ -7183,26 +7183,12 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
     const hasAnyModules = Object.values(gameState.fittings).some(f => f !== null);
     
     const activeShip = gameState.ownedShips.find(s => s.id === gameState.activeShipId);
-    const shipConfig = SHIP_REGISTRY[activeShip?.type];
+    const activeShipType = resolveShipId(gameState.combatStats?.shipId || activeShip?.type || gameState.shipClass || gameState.activeShipId) || activeShip?.type || gameState.shipClass || gameState.activeShipId;
+    const shipRegistryKey = resolveShipRegistryKey(activeShipType) || activeShipType;
+    const shipConfig = SHIP_REGISTRY[shipRegistryKey] || SHIP_REGISTRY[activeShipType];
     const spriteUrl = shipConfig?.spriteUrl || 'https://rosebud.ai/assets/spaceship.png.webp?6ILm';
 
-    const slots = [
-        { id: 'weapon1', type: 'weapon', label: 'W1', position: { x: '25%', y: '12%' } },
-        { id: 'weapon2', type: 'weapon', label: 'W2', position: { x: '50%', y: '12%' } },
-        { id: 'weapon3', type: 'weapon', label: 'W3', position: { x: '75%', y: '12%' } },
-        { id: 'active1', type: 'active', label: 'C1', position: { x: '20%', y: '38%' } },
-        { id: 'active2', type: 'active', label: 'C2', position: { x: '40%', y: '38%' } },
-        { id: 'active3', type: 'active', label: 'C3', position: { x: '60%', y: '38%' } },
-        { id: 'active4', type: 'active', label: 'C4', position: { x: '80%', y: '38%' } },
-        { id: 'passive1', type: 'passive', label: 'U1', position: { x: '20%', y: '62%' } },
-        { id: 'passive2', type: 'passive', label: 'U2', position: { x: '40%', y: '62%' } },
-        { id: 'passive3', type: 'passive', label: 'U3', position: { x: '60%', y: '62%' } },
-        { id: 'passive4', type: 'passive', label: 'U4', position: { x: '80%', y: '62%' } },
-        { id: 'rig1', type: 'rig', label: 'R1', position: { x: '20%', y: '85%' } },
-        { id: 'rig2', type: 'rig', label: 'R2', position: { x: '40%', y: '85%' } },
-        { id: 'rig3', type: 'rig', label: 'R3', position: { x: '60%', y: '85%' } },
-        { id: 'rig4', type: 'rig', label: 'R4', position: { x: '80%', y: '85%' } },
-    ].filter(s => s.id in gameState.fittings);
+    const slots = getVisualFittingSlotsForShip(activeShipType, gameState.fittings);
 
     return React.createElement('div', {
         style: {

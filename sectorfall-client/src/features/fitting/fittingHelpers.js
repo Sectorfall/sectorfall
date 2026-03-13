@@ -1,4 +1,6 @@
 import { hydrateItem } from '../../GameManager.js';
+import { SHIP_REGISTRY } from '../../shipRegistry.js';
+import { resolveShipId, resolveShipRegistryKey } from '../../data/ships/catalog.js';
 
 export const getModuleResourceUsage = (module) => {
     if (!module) return { power: 0, cpu: 0 };
@@ -20,6 +22,38 @@ export const getLiveShipResources = (fittings) => {
         cpu += usage.cpu;
     });
     return { power, cpu };
+};
+
+const FITTING_SLOT_LAYOUT = [
+    { id: 'weapon1', type: 'weapon', label: 'W1', position: { x: '25%', y: '12%' } },
+    { id: 'weapon2', type: 'weapon', label: 'W2', position: { x: '50%', y: '12%' } },
+    { id: 'weapon3', type: 'weapon', label: 'W3', position: { x: '75%', y: '12%' } },
+    { id: 'active1', type: 'active', label: 'C1', position: { x: '20%', y: '38%' } },
+    { id: 'active2', type: 'active', label: 'C2', position: { x: '40%', y: '38%' } },
+    { id: 'active3', type: 'active', label: 'C3', position: { x: '60%', y: '38%' } },
+    { id: 'active4', type: 'active', label: 'C4', position: { x: '80%', y: '38%' } },
+    { id: 'passive1', type: 'passive', label: 'U1', position: { x: '20%', y: '62%' } },
+    { id: 'passive2', type: 'passive', label: 'U2', position: { x: '40%', y: '62%' } },
+    { id: 'passive3', type: 'passive', label: 'U3', position: { x: '60%', y: '62%' } },
+    { id: 'passive4', type: 'passive', label: 'U4', position: { x: '80%', y: '62%' } },
+    { id: 'rig1', type: 'rig', label: 'R1', position: { x: '20%', y: '85%' } },
+    { id: 'rig2', type: 'rig', label: 'R2', position: { x: '40%', y: '85%' } },
+    { id: 'rig3', type: 'rig', label: 'R3', position: { x: '60%', y: '85%' } },
+    { id: 'rig4', type: 'rig', label: 'R4', position: { x: '80%', y: '85%' } },
+];
+
+export const getAllowedFittingSlotIdsForShip = (shipType, fallbackFittings = null) => {
+    const resolvedShipId = resolveShipId(shipType) || shipType;
+    const registryKey = resolveShipRegistryKey(resolvedShipId) || resolvedShipId;
+    const shipConfig = (registryKey && SHIP_REGISTRY[registryKey]) || (resolvedShipId && SHIP_REGISTRY[resolvedShipId]) || null;
+    const registrySlotIds = Object.keys(shipConfig?.fittings || {});
+    if (registrySlotIds.length) return registrySlotIds;
+    return Object.keys(fallbackFittings || {});
+};
+
+export const getVisualFittingSlotsForShip = (shipType, fallbackFittings = null) => {
+    const allowedSlotIds = new Set(getAllowedFittingSlotIdsForShip(shipType, fallbackFittings));
+    return FITTING_SLOT_LAYOUT.filter(slot => allowedSlotIds.has(slot.id));
 };
 
 export const getSlotClass = (slotId) => {
