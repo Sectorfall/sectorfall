@@ -3,7 +3,7 @@ import {
     GameManager, SYSTEMS_REGISTRY, ASTEROID_TYPES, TIER_CONFIGS, FLUX_LASER_CONFIGS, FLUX_RARITY_MODS, 
     MISSILE_CONFIGS, MISSILE_RARITY_MODS, PULSE_CANNON_CONFIGS, MINING_LASER_CONFIGS, MINING_RARITY_MODS,
     getIonThrusterStats, getShieldModuleStats, BLUEPRINT_REGISTRY, calculateQLModifier, getModColor, applyCraftingModifications, applyCatalystToItem, getItemResourceRequirements,
-    IMPLANT_REGISTRY, calculateImplantRequirement, LEVEL_REQUIREMENTS, getRequiredExp, DRONE_MODULE_CONFIGS, DRONE_STATS, getQLBand, PULSE_RARITY_MODS,
+    IMPLANT_REGISTRY, calculateImplantRequirement, LEVEL_REQUIREMENTS, getRequiredExp, DRONE_MODULE_CONFIGS, DRONE_STATS, getQLBand, hydrateItem, PULSE_RARITY_MODS,
     STARPORT_TO_SYSTEM, SYSTEM_TO_STARPORT
 } from './GameManager.js';
 import { SHIP_REGISTRY } from './shipRegistry.js';
