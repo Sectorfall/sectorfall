@@ -4262,6 +4262,33 @@ function setMarketItemQuantity(item, qty) {
   return next;
 }
 
+function cloneMarketItemWithQuantity(item, qty) {
+  if (!item || typeof item !== "object") return null;
+  return setMarketItemQuantity({ ...item }, qty);
+}
+
+function buildAuthoritativeMarketListingItemData(itemType, itemRecord, quantity) {
+  const normalizedItemType = String(itemType || '').trim();
+  const baseSnapshot = buildMarketItemSnapshot(normalizedItemType, quantity);
+  const sourceRecord = itemRecord && typeof itemRecord === 'object' ? { ...itemRecord } : {};
+  const merged = {
+    ...baseSnapshot,
+    ...sourceRecord
+  };
+
+  merged.item_id = normalizedItemType || String(merged.item_id || merged.item_type || '').trim() || baseSnapshot.item_id;
+  merged.item_type = normalizedItemType || String(merged.item_type || merged.item_id || '').trim() || baseSnapshot.item_type;
+  merged.id = String(merged.id || baseSnapshot.id || crypto.randomUUID()).trim();
+  merged.contentType = baseSnapshot.contentType || merged.contentType || null;
+  merged.catalogType = merged.catalogType || baseSnapshot.catalogType || merged.contentType || null;
+  merged.name = String(merged.name || merged.displayName || baseSnapshot.name || normalizedItemType).trim();
+  merged.displayName = String(merged.displayName || merged.name || baseSnapshot.displayName || normalizedItemType).trim();
+  merged.quantity = quantity;
+  merged.amount = quantity;
+
+  return merged;
+}
+
 function buildStoredMarketItem(itemType, quantity = 1) {
   return {
     id: crypto.randomUUID(),
@@ -4601,47 +4628,77 @@ async function addItemToStorage(playerId, starportId, itemType, quantity) {
 
 async function removeItemsFromStorageOrCargo(playerId, starportId, itemType, quantity) {
   const normalizedStarportId = normalizeStarportId(starportId);
-  let remaining = Math.max(0, finiteNum(quantity, 0));
-  if (remaining <= 0) return { ok: true, removed: 0 };
+  const requestedQty = Math.max(0, finiteNum(quantity, 0));
+  let remaining = requestedQty;
+  if (remaining <= 0) return { ok: true, removed: 0, removedItems: [], primaryItem: null };
 
   const inv = await loadInventoryStateServer(playerId, normalizedStarportId);
-  const items = cloneItems(inv.items);
-  const idx = findMarketItemIndex(items, itemType);
-  if (idx >= 0) {
-    const current = getMarketItemQuantity(items[idx]);
-    const take = Math.min(current, remaining);
-    remaining -= take;
-    const nextQty = current - take;
-    if (nextQty > 0) items[idx] = setMarketItemQuantity(items[idx], nextQty);
-    else items.splice(idx, 1);
-    await saveInventoryStateServer(playerId, normalizedStarportId, items);
-  }
-
-  if (remaining <= 0) return { ok: true, removed: quantity };
+  const storageItems = cloneItems(inv.items);
+  const storageIdx = findMarketItemIndex(storageItems, itemType);
+  const storageItem = storageIdx >= 0 ? storageItems[storageIdx] : null;
+  const storageQty = storageItem ? getMarketItemQuantity(storageItem) : 0;
 
   const ship = await loadShipState(playerId);
-  const cargo = Array.isArray(ship?.cargo) ? cloneItems(ship.cargo) : [];
-  const cargoIdx = findMarketItemIndex(cargo, itemType);
-  if (cargoIdx >= 0) {
-    const current = getMarketItemQuantity(cargo[cargoIdx]);
-    const take = Math.min(current, remaining);
-    remaining -= take;
-    const nextQty = current - take;
-    if (nextQty > 0) cargo[cargoIdx] = setMarketItemQuantity(cargo[cargoIdx], nextQty);
-    else cargo.splice(cargoIdx, 1);
+  const cargoItems = Array.isArray(ship?.cargo) ? cloneItems(ship.cargo) : [];
+  const cargoIdx = findMarketItemIndex(cargoItems, itemType);
+  const cargoItem = cargoIdx >= 0 ? cargoItems[cargoIdx] : null;
+  const cargoQty = cargoItem ? getMarketItemQuantity(cargoItem) : 0;
 
-    const { error } = await supabase
-      .from("ship_states_v2")
-      .update({ cargo, updated_at: nowIso() })
-      .eq("player_id", playerId);
-    if (error) throw error;
+  if ((storageQty + cargoQty) < requestedQty) {
+    throw new Error("insufficient_inventory");
+  }
+
+  const removedItems = [];
+  let storageChanged = false;
+  let cargoChanged = false;
+
+  if (storageIdx >= 0 && remaining > 0) {
+    const take = Math.min(storageQty, remaining);
+    if (take > 0) {
+      remaining -= take;
+      removedItems.push({ source: 'storage', item: cloneMarketItemWithQuantity(storageItem, take) });
+      const nextQty = storageQty - take;
+      if (nextQty > 0) storageItems[storageIdx] = setMarketItemQuantity(storageItem, nextQty);
+      else storageItems.splice(storageIdx, 1);
+      storageChanged = true;
+    }
+  }
+
+  if (cargoIdx >= 0 && remaining > 0) {
+    const take = Math.min(cargoQty, remaining);
+    if (take > 0) {
+      remaining -= take;
+      removedItems.push({ source: 'cargo', item: cloneMarketItemWithQuantity(cargoItem, take) });
+      const nextQty = cargoQty - take;
+      if (nextQty > 0) cargoItems[cargoIdx] = setMarketItemQuantity(cargoItem, nextQty);
+      else cargoItems.splice(cargoIdx, 1);
+      cargoChanged = true;
+    }
   }
 
   if (remaining > 0) {
     throw new Error("insufficient_inventory");
   }
 
-  return { ok: true, removed: quantity };
+  if (storageChanged) {
+    await saveInventoryStateServer(playerId, normalizedStarportId, storageItems);
+  }
+
+  if (cargoChanged) {
+    const { error } = await supabase
+      .from("ship_states_v2")
+      .update({ cargo: cargoItems, updated_at: nowIso() })
+      .eq("player_id", playerId);
+    if (error) throw error;
+  }
+
+  const primaryItem = removedItems[0]?.item || null;
+  return {
+    ok: true,
+    removed: requestedQty,
+    removedItems,
+    primaryItem
+  };
 }
 
 async function insertMarketTransaction({ buyerId = null, sellerId = null, itemType = null, qty = 0, price = 0, total = 0 } = {}) {
@@ -5379,19 +5436,13 @@ async function handleMarketCreateSellOrder(socket, data) {
     const itemType = String(data?.item_type || "").trim();
     const quantity = Math.max(1, Math.round(finiteNum(data?.quantity, 0)));
     const pricePerUni = Math.max(1, Math.round(finiteNum(data?.price_per_uni, 0)));
-    const itemData = (data?.item_data && typeof data.item_data === "object")
-      ? data.item_data
-      : ((data?.itemData && typeof data.itemData === "object") ? data.itemData : null);
-
     console.log("[Market][Backend] create sell payload", {
       userId,
       dockedStarport,
       itemType,
       quantity,
       pricePerUni,
-      hasItemData: !!itemData,
-      itemDataName: itemData?.name || null,
-      itemDataType: itemData?.type || null
+      clientItemDataIgnored: true
     });
 
     if (!itemType || quantity <= 0 || pricePerUni <= 0) {
@@ -5399,14 +5450,27 @@ async function handleMarketCreateSellOrder(socket, data) {
       return;
     }
 
-    await removeItemsFromStorageOrCargo(userId, dockedStarport, itemType, quantity);
+    const removedResult = await removeItemsFromStorageOrCargo(userId, dockedStarport, itemType, quantity);
+    const authoritativeItemData = buildAuthoritativeMarketListingItemData(itemType, removedResult?.primaryItem, quantity);
+
+    console.log("[Market][Backend] authoritative sell item built", {
+      userId,
+      itemType,
+      removed: removedResult?.removed || 0,
+      source: removedResult?.removedItems?.[0]?.source || null,
+      itemName: authoritativeItemData?.name || null,
+      itemDisplayName: authoritativeItemData?.displayName || null,
+      contentType: authoritativeItemData?.contentType || null,
+      catalogType: authoritativeItemData?.catalogType || null
+    });
+
     const commander = await loadCommanderDataRow(userId);
     const payload = {
       starport_id: dockedStarport,
       seller_id: userId,
       seller_name: commander?.commander_name || null,
       item_type: itemType,
-      item_data: itemData,
+      item_data: authoritativeItemData,
       quantity,
       price_per_uni: pricePerUni,
       status: "open",
