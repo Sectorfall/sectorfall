@@ -33,8 +33,9 @@ import { getFormattedFittingTitle, getFittingHardwareTitle, evaluateFittingCandi
 import { canItemsStackForTransfer, mergeTransferredItemIntoList, removeSingleTransferredItemFromList, calculateCargoTotals } from './features/inventory/inventoryHelpers.js';
 import { buildTransferToStationState, buildTransferToShipState, buildDockedCargoCloudPayload } from './features/inventory/inventoryActions.js';
 import { useCargoMenuState } from './features/inventory/inventoryState.js';
-import { getCurrentTradeStarportId, getTradeItemIdentifier, getTradeItemDisplayName, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
+import { getCurrentTradeStarportId, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
 import { useTradeHubState } from './features/trade/tradeState.js';
+import { createTradeListingTransaction, buyTradeListingTransaction, createTradeBuyOrderTransaction, cancelTradeListingTransaction } from './features/trade/tradeActions.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -10675,18 +10676,19 @@ showStarportUI: function (starportId) {
         }
 
         try {
-            await MarketSystem.createSellOrder(
-                getTradeItemIdentifier(item),
+            const result = await createTradeListingTransaction({
+                MarketSystem,
+                cloudService,
+                item,
+                price,
                 quantity,
-                parseFloat(price),
                 currentStarportId,
-                item
-            );
+                userId: cloudService.user?.id
+            });
 
-            showNotification(`Listed ${quantity}x ${getTradeItemDisplayName(item)} for ${price} Cr/unit.`, "success");
+            showNotification(result.successMessage, "success");
 
-            const updatedStorage = await cloudService.getInventoryState(cloudService.user.id, currentStarportId);
-            setGameState(prev => buildTradeStorageState(prev, currentStarportId, updatedStorage?.items || [], hydrateItem));
+            setGameState(prev => buildTradeStorageState(prev, currentStarportId, result.updatedStorageItems, hydrateItem));
             return true;
         } catch (error) {
             console.error("[TradeHub] Listing failed:", error);
@@ -10706,16 +10708,21 @@ showStarportUI: function (starportId) {
         const currentStarportId = getCurrentTradeStarportId(gameState.currentSystem?.id, SYSTEM_TO_STARPORT);
 
         try {
-            const result = await MarketSystem.buyListing(listing.id, buyerId, currentStarportId, quantity);
+            const result = await buyTradeListingTransaction({
+                MarketSystem,
+                cloudService,
+                listing,
+                quantity,
+                buyerId,
+                currentStarportId
+            });
 
-            if (result.success) {
-                showNotification(`Purchased ${getTradeItemDisplayName(listing?.item || listing)} for ${listing.price} Cr.`, "success");
-
-                const updatedStorage = await cloudService.getInventoryState(buyerId, currentStarportId);
+            if (result.marketResult?.success) {
+                showNotification(result.successMessage, "success");
 
                 setGameState(prev => ({
-                    ...buildTradeStorageState(prev, currentStarportId, updatedStorage?.items || (prev.storage[currentStarportId] || []), hydrateItem),
-                    credits: getCommanderCreditsFromResult(result, prev.credits)
+                    ...buildTradeStorageState(prev, currentStarportId, result.updatedStorageItems || (prev.storage[currentStarportId] || []), hydrateItem),
+                    credits: getCommanderCreditsFromResult(result.marketResult, prev.credits)
                 }));
             }
         } catch (error) {
@@ -10734,13 +10741,18 @@ showStarportUI: function (starportId) {
         if (!userId || !currentStarportId) return;
 
         try {
-            const result = await MarketSystem.createBuyOrder(itemType, quantity, pricePerUni, currentStarportId);
-            showNotification(`Posted Buy Order for ${quantity}x ${String(itemType || '').toUpperCase()}.`, "success");
+            const result = await createTradeBuyOrderTransaction({
+                MarketSystem,
+                itemType,
+                quantity,
+                pricePerUni,
+                currentStarportId
+            });
+            showNotification(result.successMessage, "success");
             
-            const refreshedMarket = await MarketSystem.fetchMarketData(currentStarportId, 'buy_orders');
-            setNewBuyOrders(refreshedMarket?.buyOrders || []);
-            if (typeof result?.commanderState?.credits === 'number') {
-                setGameState(prev => ({ ...prev, credits: getCommanderCreditsFromResult(result, prev.credits) }));
+            setNewBuyOrders(result.buyOrders || []);
+            if (typeof result.marketResult?.commanderState?.credits === 'number') {
+                setGameState(prev => ({ ...prev, credits: getCommanderCreditsFromResult(result.marketResult, prev.credits) }));
             }
             return true;
         } catch (error) {
@@ -10870,13 +10882,18 @@ showStarportUI: function (starportId) {
     const handleCancelTradeItem = async (listingId) => {
         if (!gameManagerRef.current) return;
         try {
-            await MarketSystem.cancelSellOrder(listingId);
-            showNotification("Market listing cancelled. Item returned to regional storage.", "info");
-            
             const currentStarportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
-            const updatedStorage = await cloudService.getInventoryState(cloudService.user.id, currentStarportId);
+            const result = await cancelTradeListingTransaction({
+                MarketSystem,
+                cloudService,
+                listingId,
+                currentStarportId,
+                userId: cloudService.user?.id
+            });
+            showNotification(result.successMessage, "info");
+            
             setGameState(prev => ({ ...prev,
-                storage: { ...prev.storage, [currentStarportId]: (updatedStorage?.items || []).map(hydrateItem) }
+                storage: { ...prev.storage, [currentStarportId]: result.updatedStorageItems.map(hydrateItem) }
             }));
         } catch (error) {
             console.error("[TradeHub] Cancellation failed:", error);
