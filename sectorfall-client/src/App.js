@@ -11,10 +11,6 @@ import { ITEM_CATALOG } from './data/items/catalog.js';
 import { createItemInstance, deriveItemIdFromBlueprint } from './data/items/items.helpers.js';
 import { validateItemBlueprintIntegrity } from './data/items/validate.js';
 import { resolveShipId, resolveShipRegistryKey } from './data/ships/catalog.js';
-import { getShipDisplayName, getShipClassLabel, resolveCurrentStarportId } from './features/hangar/hangarHelpers.js';
-import { requestShipActivation, repairShipAtStarport, transferShipToHangar, transferShipFromHangar, loadDockedStarportData } from './features/hangar/HangarService.js';
-import { useStationInteriorHangarState } from './features/hangar/hangarState.js';
-import { createHangarActionHandlers } from './features/hangar/hangarActions.js';
 import { cloudService } from './CloudService.js';
 import { supabase } from './supabaseClient.js';
 import { chatService } from './chat/ChatService.js';
@@ -34,6 +30,40 @@ function numOr(value, fallback = 0) {
     ? value
     : fallback;
 }
+
+// -----------------------------------------------------
+// SHIP DISPLAY NAME (ship_id -> human name)
+// -----------------------------------------------------
+const prettifyShipId = (value) => {
+  const s = String(value || '').trim();
+  if (!s) return 'UNKNOWN SHIP';
+  // ship_omni_scout_t1 -> OMNI SCOUT
+  const cleaned = s
+    .replace(/^ship_/, '')
+    .replace(/_t\d+$/i, '')
+    .replace(/_/g, ' ')
+    .trim();
+  return cleaned ? cleaned.toUpperCase() : s.toUpperCase();
+};
+
+const getShipDisplayName = (shipTypeOrId) => {
+  const sid = resolveShipId(shipTypeOrId) || shipTypeOrId;
+  const regKey = resolveShipRegistryKey(sid) || sid;
+  const cfg = SHIP_REGISTRY[regKey] || SHIP_REGISTRY[sid] || SHIP_REGISTRY[shipTypeOrId];
+  return cfg?.name || cfg?.displayName || cfg?.label || prettifyShipId(shipTypeOrId);
+};
+
+// More conservative: class label should never fall back to a raw ship_id.
+const getShipClassLabel = (shipTypeOrId) => {
+  const sid = resolveShipId(shipTypeOrId) || shipTypeOrId;
+  const regKey = resolveShipRegistryKey(sid) || sid;
+  const cfg = SHIP_REGISTRY[regKey] || SHIP_REGISTRY[sid] || SHIP_REGISTRY[shipTypeOrId];
+  const candidate = cfg?.classLabel || cfg?.className || cfg?.hullClass || cfg?.role || cfg?.classId;
+  if (!candidate) return 'VESSEL';
+  // If the "class" is actually a ship id, don't show it.
+  if (String(candidate).toLowerCase().startsWith('ship_')) return 'VESSEL';
+  return String(candidate).toUpperCase();
+};
 
 const STACKABLE_TRANSFER_TYPES = new Set(['resource', 'material', 'blueprint', 'bio-material', 'ore']);
 
@@ -6639,20 +6669,54 @@ const StationInterior = ({
     onCreateContract, onAcceptContract, onPickupPackage, onDeliverPackage, onCancelListing, onCancelContract,
     onActivateShip, onDepositShip
 }) => {
-    const {
-        view,
-        setView,
-        repairMenuShipId,
-        setRepairMenuShipId,
-        repairProgress,
-        setRepairProgress,
-        selectedShipId,
-        setSelectedShipId,
-        allShips,
-        selectedShip,
-        selectedShipIsActive,
-        telemetryShip
-    } = useStationInteriorHangarState(gameState);
+    const [view, setView] = useState('hangar');
+    const [repairMenuShipId, setRepairMenuShipId] = useState(null);
+    const [repairProgress, setRepairProgress] = useState(0); // Percentage of missing HP to repair
+    const [selectedShipId, setSelectedShipId] = useState(gameState.activeShipId);
+    
+    // Ensure selected ship is valid or fallback to active ship
+    // Combine fleet + hangar, but never show duplicates if the same ship exists in both lists.
+    const activeOwnedShip = (gameState.ownedShips || []).find(s => s && s.id === gameState.activeShipId) || null;
+    const allShips = [
+        ...(activeOwnedShip ? [activeOwnedShip] : []),
+        ...(gameState.hangarShips || []),
+        ...((gameState.ownedShips || []).filter(s => s && s.id !== gameState.activeShipId))
+    ].filter((s, idx, arr) => s && arr.findIndex(t => t && t.id === s.id) === idx);
+    const selectedShip = allShips.find(s => s.id === selectedShipId) || 
+                       allShips.find(s => s.id === gameState.activeShipId) ||
+                       allShips[0];
+    const selectedShipIsActive = Boolean(selectedShip && selectedShip.id === gameState.activeShipId);
+    const telemetryShip = selectedShip ? (selectedShipIsActive ? {
+        ...selectedShip,
+        type: resolveShipId(gameState.shipClass || selectedShip.type) || selectedShip.type,
+        hp: numOr(gameState.hp, numOr(selectedShip.hp, 0)),
+        maxHp: numOr(gameState.maxHp, numOr(selectedShip.maxHp, numOr(selectedShip.hp, 0))),
+        shields: numOr(gameState.shields, numOr(selectedShip.shields, 0)),
+        maxShields: numOr(gameState.maxShields, numOr(selectedShip.maxShields, numOr(selectedShip.shields, 0))),
+        energy: numOr(gameState.energy, numOr(selectedShip.energy, 0)),
+        maxEnergy: numOr(gameState.maxEnergy, numOr(selectedShip.maxEnergy, numOr(selectedShip.energy, 0))),
+        armor: numOr(gameState.armor, 0),
+        resistances: (gameState.resistances && typeof gameState.resistances === 'object') ? gameState.resistances : {},
+        combat_stats: (gameState.combatStats && typeof gameState.combatStats === 'object') ? gameState.combatStats : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combat_stats && typeof selectedShip.combat_stats === 'object') ? selectedShip.combat_stats : null)),
+        combatStats: (gameState.combatStats && typeof gameState.combatStats === 'object') ? gameState.combatStats : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combatStats && typeof selectedShip.combatStats === 'object') ? selectedShip.combatStats : null)),
+        fittings: gameState.fittings || selectedShip.fittings || {}
+    } : {
+        ...selectedShip,
+        type: resolveShipId(selectedShip.type) || selectedShip.type,
+        armor: 0,
+        resistances: {},
+        combat_stats: null,
+        combatStats: null,
+        kineticRes: 0,
+        thermalRes: 0,
+        blastRes: 0
+    }) : null;
+    
+    useEffect(() => {
+        if (!selectedShipId && gameState.activeShipId) {
+            setSelectedShipId(gameState.activeShipId);
+        }
+    }, [gameState.activeShipId]);
     return React.createElement('div', {
         style: {
             position: 'absolute',
@@ -9237,8 +9301,28 @@ useEffect(() => {
         const resolvedMaxShields = typeof detail.maxShields === 'number' ? detail.maxShields : (typeof nextCombatStats?.maxShields === 'number' ? nextCombatStats.maxShields : null);
         const resolvedMaxEnergy = typeof detail.maxEnergy === 'number' ? detail.maxEnergy : (typeof nextCombatStats?.maxEnergy === 'number' ? nextCombatStats.maxEnergy : null);
         const resolvedArmor = typeof detail.armor === 'number' ? detail.armor : (typeof nextCombatStats?.armor === 'number' ? nextCombatStats.armor : null);
+        const authoritativeShipId = resolveShipId(
+            nextCombatStats?.shipId
+            || detail.shipId
+            || detail.ship_id
+            || detail.shipType
+            || detail.ship_type
+            || null
+        ) || null;
+        const activeShipRecord = (gameState.ownedShips || []).find((ship) => ship && ship.id === gameState.activeShipId)
+            || (gameState.hangarShips || []).find((ship) => ship && ship.id === gameState.activeShipId)
+            || null;
+        const currentLiveShipId = resolveShipId(
+            gameManagerRef.current?.ship?.type
+            || activeShipRecord?.type
+            || gameState.shipClass
+            || gameState.activeShipId
+            || null
+        ) || null;
 
         console.log('[Authoritative Ship State]', {
+            shipId: authoritativeShipId,
+            currentLiveShipId,
             hp: detail.hp,
             maxHp: resolvedMaxHp,
             shields: detail.shields,
@@ -9251,8 +9335,56 @@ useEffect(() => {
             fittings: nextFittings
         });
 
+        if (
+            authoritativeShipId
+            && authoritativeShipId !== currentLiveShipId
+            && typeof gameManagerRef.current?.rebuildShip === 'function'
+        ) {
+            const registryKey = resolveShipRegistryKey(authoritativeShipId) || authoritativeShipId;
+            const registryShip = SHIP_REGISTRY[registryKey] || SHIP_REGISTRY[authoritativeShipId] || null;
+            if (registryShip) {
+                const rebuiltShip = hydrateVessel(
+                    {
+                        ...registryShip,
+                        id: gameState.activeShipId || activeShipRecord?.id || authoritativeShipId,
+                        type: authoritativeShipId,
+                        name: getShipDisplayName(authoritativeShipId)
+                    },
+                    {
+                        ...(activeShipRecord || {}),
+                        id: gameState.activeShipId || activeShipRecord?.id || authoritativeShipId,
+                        type: authoritativeShipId,
+                        name: getShipDisplayName(authoritativeShipId),
+                        hp: typeof detail.hp === 'number' ? detail.hp : activeShipRecord?.hp,
+                        maxHp: typeof resolvedMaxHp === 'number' ? resolvedMaxHp : activeShipRecord?.maxHp,
+                        shields: typeof detail.shields === 'number' ? detail.shields : activeShipRecord?.shields,
+                        maxShields: typeof resolvedMaxShields === 'number' ? resolvedMaxShields : activeShipRecord?.maxShields,
+                        energy: typeof detail.energy === 'number' ? detail.energy : activeShipRecord?.energy,
+                        maxEnergy: typeof resolvedMaxEnergy === 'number' ? resolvedMaxEnergy : activeShipRecord?.maxEnergy,
+                        armor: typeof resolvedArmor === 'number' ? resolvedArmor : activeShipRecord?.armor,
+                        resistances: nextResistances || activeShipRecord?.resistances,
+                        combatStats: nextCombatStats || activeShipRecord?.combatStats,
+                        fittings: nextFittings
+                    },
+                    {
+                        hp: typeof detail.hp === 'number' ? detail.hp : undefined,
+                        maxHp: typeof resolvedMaxHp === 'number' ? resolvedMaxHp : undefined,
+                        shields: typeof detail.shields === 'number' ? detail.shields : undefined,
+                        maxShields: typeof resolvedMaxShields === 'number' ? resolvedMaxShields : undefined,
+                        energy: typeof detail.energy === 'number' ? detail.energy : undefined,
+                        maxEnergy: typeof resolvedMaxEnergy === 'number' ? resolvedMaxEnergy : undefined,
+                        fittings: nextFittings
+                    }
+                );
+                gameManagerRef.current.rebuildShip(rebuiltShip);
+                console.log('[Authoritative Ship State] rebuildShip applied for authoritative ship:', authoritativeShipId);
+            }
+        }
+
         setGameState(prev => ({
             ...prev,
+            shipName: authoritativeShipId ? getShipDisplayName(authoritativeShipId) : prev.shipName,
+            shipClass: authoritativeShipId ? getShipClassLabel(authoritativeShipId) : prev.shipClass,
             hp: typeof detail.hp === 'number' ? detail.hp : prev.hp,
             maxHp: typeof resolvedMaxHp === 'number' ? resolvedMaxHp : prev.maxHp,
             shields: typeof detail.shields === 'number' ? detail.shields : prev.shields,
@@ -9268,6 +9400,9 @@ useEffect(() => {
                     if (!ship || ship.id !== prev.activeShipId) return ship;
                     return {
                         ...ship,
+                        type: authoritativeShipId || ship.type,
+                        name: authoritativeShipId ? getShipDisplayName(authoritativeShipId) : ship.name,
+                        classId: authoritativeShipId ? getShipClassLabel(authoritativeShipId) : ship.classId,
                         hp: typeof detail.hp === 'number' ? detail.hp : ship.hp,
                         maxHp: typeof resolvedMaxHp === 'number' ? resolvedMaxHp : ship.maxHp,
                         shields: typeof detail.shields === 'number' ? detail.shields : ship.shields,
@@ -9585,21 +9720,44 @@ if (gameManagerRef.current) {
 }
         // system_id now comes ONLY from EC2 spawn packet
 let targetSystemId = STARPORT_TO_SYSTEM[lastStationId] || 'cygnus-prime';
-        const currentStarportId = resolveCurrentStarportId(targetSystemId, SYSTEM_TO_STARPORT);
+        const currentStarportId = SYSTEM_TO_STARPORT[targetSystemId];
         await gameManagerRef.current.loadSystem(targetSystemId, currentStarportId);
 
         setIsDocked(localCache ? localCache.isDocked : true);
         const dockedAtStarport = localCache ? localCache.isDocked : true;
 
         // 6. Load Regional Storage and Hangar if docked
-        const { stationStorage, hangarShips } = await loadDockedStarportData({
-            isDocked: dockedAtStarport,
-            playerId,
-            starportId: currentStarportId,
-            cloudService,
-            hydrateItem,
-            hydrateVessel
-        });
+        let stationStorage = [];
+        let hangarShips = [];
+        if (dockedAtStarport) {
+            if (currentStarportId) {
+                const [inventoryState, hangarData] = await Promise.all([
+                    cloudService.getInventoryState(playerId, currentStarportId),
+                    cloudService.getHangarShips(playerId, currentStarportId)
+                ]);
+                
+                if (inventoryState) {
+                    stationStorage = (Array.isArray(inventoryState.items) ? inventoryState.items : [])
+                        .filter(i => i.type !== 'ship' && !i.isShip)
+                        .map(hydrateItem);
+                }
+                if (hangarData) {
+                    hangarShips = (hangarData || []).map(h => {
+                        const config = h.ship_config || {};
+                        const type = config.type || config.item_id || 'OMNI SCOUT';
+                        const registry = SHIP_REGISTRY[type] || SHIP_REGISTRY['OMNI SCOUT'];
+                        
+                        return hydrateVessel({
+                            ...registry, // Use registry as base for safety
+                            ...config, // Overlay stored instance data
+                            id: h.ship_id,
+                            type: type, // Ensure type matches registry key
+                            dbId: h.id // internal row id
+                        });
+                    });
+                }
+            }
+        }
 
         const actualSystemData = SYSTEMS_REGISTRY[targetSystemId];
         const systemInfo = {
@@ -9750,21 +9908,37 @@ let targetSystemId = STARPORT_TO_SYSTEM[lastStationId] || 'cygnus-prime';
         // Refresh Starport Data when docking
         if (isDocked && cloudService.user) {
             const currentSystemId = gameState.currentSystem?.id;
-            const starportId = resolveCurrentStarportId(currentSystemId, SYSTEM_TO_STARPORT);
+            const starportId = SYSTEM_TO_STARPORT[currentSystemId];
             if (starportId) {
                 (async () => {
-                    const { stationStorage, hangarShips } = await loadDockedStarportData({
-                        isDocked: true,
-                        playerId: cloudService.user.id,
-                        starportId,
-                        cloudService,
-                        hydrateItem,
-                        hydrateVessel
-                    });
-
+                    const [inventoryState, hangarData] = await Promise.all([
+                        cloudService.getInventoryState(cloudService.user.id, starportId),
+                        cloudService.getHangarShips(cloudService.user.id, starportId)
+                    ]);
+                    
                     setGameState(prev => ({ ...prev,
-                        storage: { ...prev.storage, [starportId]: stationStorage },
-                        hangarShips
+                        storage: { ...prev.storage, [starportId]: (Array.isArray(inventoryState?.items) ? inventoryState.items : []).filter(i => i.type !== 'ship' && !i.isShip) },
+                        hangarShips: (hangarData || []).map(h => {
+                            const config = h.ship_config || {};
+                            const type = config.type || config.item_id || 'OMNI SCOUT';
+                            const registry = SHIP_REGISTRY[type] || SHIP_REGISTRY['OMNI SCOUT'];
+                            return {
+                                ...registry,
+                                ...config,
+                                id: h.ship_id,
+                                type: type,
+                                classId: registry.classId || type,
+                                isShip: true,
+                                hp: config.hp ?? registry.hp,
+                                energy: config.energy ?? registry.baseEnergy,
+                                fittings: config.fittings || {
+                                    weapon1: null, weapon2: null, active1: null,
+                                    passive1: null, passive2: null, rig1: null,
+                                    synapse1: null, synapse2: null, synapse3: null
+                                },
+                                dbId: h.id
+                            };
+                        })
                     }));
                 })();
             }
@@ -10828,30 +11002,156 @@ showStarportUI: function (starportId) {
         });
     };
 
-    const {
-        handleActivateShip,
-        handleDepositShip,
-        handleCommandShip,
-        handleRepairShip
-    } = createHangarActionHandlers({
-        isDocked,
-        cloudUser,
-        backendSocket,
-        gameState,
-        setGameState,
-        hydrateVessel,
-        resolveShipRegistryKey,
-        getLiveShipResources,
-        getShipDisplayName,
-        getShipClassLabel,
-        SHIP_REGISTRY,
-        showNotification,
-        requestShipActivation,
-        repairShipAtStarport,
-        cloudService,
-        SYSTEM_TO_STARPORT,
-        gameManagerRef
-    });
+    const handleShipActivationTransaction = async (ship) => {
+        if (!isDocked || !cloudUser) {
+            showNotification("ACTIVATE FAILED: VESSEL MUST BE DOCKED AT STARPORT", "error");
+            return;
+        }
+
+        if (!backendSocket?.requestActivateShip) {
+            showNotification("ACTIVATE FAILED: BACKEND COMMAND UNAVAILABLE", "error");
+            return;
+        }
+
+        const shipId = String(ship?.id || '').trim();
+        if (!shipId) {
+            showNotification("ACTIVATE FAILED: INVALID SHIP", "error");
+            return;
+        }
+
+        if (shipId === gameState.activeShipId) {
+            showNotification(`${ship.name || 'Ship'} already current.`, "info");
+            return;
+        }
+
+        try {
+            const result = await backendSocket.requestActivateShip({ shipId });
+            if (!result?.ok) {
+                showNotification(`ACTIVATE FAILED: ${String(result?.error || 'backend_rejected').replace(/_/g, ' ').toUpperCase()}`, "error");
+                return;
+            }
+
+            const targetShip = hydrateVessel(ship, ship);
+            const shipConfig = SHIP_REGISTRY[resolveShipRegistryKey(targetShip.type) || targetShip.type] || SHIP_REGISTRY[targetShip.type] || {};
+            const resources = getLiveShipResources(targetShip.fittings || {});
+
+            setGameState(prev => {
+                const currentActiveShip = (prev.ownedShips || []).find(s => s.id === prev.activeShipId)
+                    || (prev.hangarShips || []).find(s => s.id === prev.activeShipId)
+                    || null;
+
+                const nextOwnedShips = (prev.ownedShips || []).filter(s => s.id !== shipId && s.id !== currentActiveShip?.id);
+                nextOwnedShips.push(targetShip);
+
+                const nextHangarShips = (prev.hangarShips || []).filter(s => s.id !== shipId && s.id !== currentActiveShip?.id);
+                if (currentActiveShip && currentActiveShip.id !== shipId) {
+                    nextHangarShips.push({ ...currentActiveShip });
+                }
+
+                return {
+                    ...prev,
+                    hangarShips: nextHangarShips,
+                    ownedShips: nextOwnedShips,
+                    activeShipId: shipId,
+                    shipName: getShipDisplayName(targetShip.type),
+                    shipClass: getShipClassLabel(targetShip.type),
+                    fittings: targetShip.fittings || {},
+                    currentPowerGrid: resources.power,
+                    currentCpu: resources.cpu,
+                    maxHp: typeof targetShip.maxHp === 'number' ? targetShip.maxHp : (shipConfig.hp || prev.maxHp),
+                    hp: typeof targetShip.hp === 'number' ? targetShip.hp : (shipConfig.hp || prev.hp),
+                    armor: typeof targetShip.armor === 'number' ? targetShip.armor : (shipConfig.armor || prev.armor),
+                    kineticRes: typeof targetShip.kineticRes === 'number' ? targetShip.kineticRes : (shipConfig.kineticRes || prev.kineticRes),
+                    thermalRes: typeof targetShip.thermalRes === 'number' ? targetShip.thermalRes : (shipConfig.thermalRes || prev.thermalRes),
+                    blastRes: typeof targetShip.blastRes === 'number' ? targetShip.blastRes : (shipConfig.blastRes || prev.blastRes),
+                    maxEnergy: typeof targetShip.maxEnergy === 'number' ? targetShip.maxEnergy : (shipConfig.baseEnergy || prev.maxEnergy),
+                    energy: typeof targetShip.energy === 'number' ? targetShip.energy : (shipConfig.baseEnergy || prev.energy),
+                    reactorRecovery: shipConfig.baseEnergyRecharge || prev.reactorRecovery || 1.0,
+                    maxPowerGrid: shipConfig.basePG || prev.maxPowerGrid,
+                    maxCpu: shipConfig.baseCPU || prev.maxCpu,
+                    cargoHold: shipConfig.cargoHold || prev.cargoHold,
+                    cargoMaxVolume: shipConfig.cargoMaxVolume || prev.cargoMaxVolume,
+                    sigRadius: shipConfig.baseSigRadius || prev.sigRadius,
+                    scanRange: shipConfig.scanRange || prev.scanRange,
+                    lockOnRange: shipConfig.lockOnRange || prev.lockOnRange,
+                    lockMultiplier: shipConfig.lockMultiplier || prev.lockMultiplier,
+                    maxSpeed: targetShip.maxSpeed || shipConfig.maxSpeed || prev.maxSpeed || 3.5,
+                    turnSpeed: targetShip.turnSpeed || shipConfig.turnSpeed || prev.turnSpeed || 0.045,
+                    modifiedStats: targetShip.modifiedStats || null
+                };
+            });
+
+            gameManagerRef.current?.rebuildShip(targetShip);
+            showNotification(`${targetShip.name} activated and previous vessel secured in hangar.`, "success");
+        } catch (err) {
+            console.error("Activate failed:", err);
+            showNotification("ACTIVATE FAILED: Could not process vessel activation.", "error");
+        }
+    };
+
+    const handleActivateShip = async (ship) => {
+        await handleShipActivationTransaction(ship);
+    };
+
+    const handleDepositShip = async (ship) => {
+        if (!isDocked || !cloudUser) {
+            showNotification("DEPOSIT FAILED: VESSEL MUST BE DOCKED AT STARPORT", "error");
+            return;
+        }
+
+        const currentSystemId = gameState.currentSystem?.id;
+        const starportId = SYSTEM_TO_STARPORT[currentSystemId];
+        
+        if (!starportId) {
+            showNotification("DEPOSIT FAILED: NO AUTHORITATIVE STARPORT ID", "error");
+            return;
+        }
+
+        // Cannot deposit the currently active ship
+        if (ship.id === gameState.activeShipId) {
+            showNotification("DEPOSIT FAILED: CANNOT STORE CURRENTLY COMMANDED VESSEL", "error");
+            return;
+        }
+
+        try {
+            const registry = SHIP_REGISTRY[resolveShipRegistryKey(ship.type) || ship.type];
+            const shipToSave = {
+                ...ship,
+                type: ship.type,
+                classId: registry?.classId || ship.type,
+                isShip: true
+            };
+            
+            await cloudService.saveToHangar(cloudUser.id, starportId, ship.id, shipToSave);
+            
+            setGameState(prev => {
+                const newState = {
+                    ...prev,
+                    ownedShips: prev.ownedShips.filter(s => s.id !== ship.id),
+                    hangarShips: [...(prev.hangarShips || []), shipToSave]
+                };
+                
+                // CRITICAL: Immediate Cloud Manifest Sync to prevent race conditions on refresh
+                cloudService.updateCommanderData(cloudUser.id, {
+                    owned_ships: newState.ownedShips
+                });
+                
+                return newState;
+            });
+            
+            const prettyPort = String(starportId).replace(/_/g,' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+            showNotification(`${ship.name} secured in hangar at ${prettyPort}.`, "success");
+        } catch (err) {
+            console.error("Deposit failed:", err);
+            showNotification("DEPOSIT FAILED: Could not secure vessel in hangar.", "error");
+        }
+    };
+
+    const handleCommandShip = async (shipId) => {
+        const targetShip = gameState.ownedShips.find(s => s.id === shipId) || gameState.hangarShips.find(s => s.id === shipId);
+        if (!targetShip) return;
+        await handleShipActivationTransaction(targetShip);
+    };
 
     const [isShipDestroyed, setIsShipDestroyed] = useState(false);
     const [showDestroyedButton, setShowDestroyedButton] = useState(false);
@@ -11687,7 +11987,101 @@ showStarportUI: function (starportId) {
         }
     };
 
-    const handleUndock = () => {
+    const handleRepairShip = async (shipId, repairPercent) => {
+        const userId = cloudService.user?.id;
+        if (!userId) {
+            console.warn("[App] handleRepairShip: No user ID");
+            return;
+        }
+
+        console.log(`[App] Initiating backend-authoritative repair for ship ${shipId} at ${repairPercent}%`);
+
+        try {
+            const result = await backendSocket.requestRepairShip({ shipId, repairPercent });
+
+            if (!result) {
+                showNotification("REPAIR FAILED: Backend timeout.", "error");
+                return;
+            }
+
+            if (!result.ok) {
+                if (typeof result.credits === 'number') {
+                    setGameState(prev => ({ ...prev, credits: result.credits }));
+                }
+                const reasonMap = {
+                    not_docked: "REPAIR FAILED: You must be docked.",
+                    invalid_request: "REPAIR FAILED: Invalid repair request.",
+                    insufficient_credits: "REPAIR FAILED: Insufficient credits.",
+                    nothing_to_repair: "REPAIR FAILED: Hull is already at full integrity.",
+                    persist_failed: "REPAIR FAILED: Persistence layer rejected the repair."
+                };
+                showNotification(reasonMap[result.error] || "REPAIR FAILED: Internal facility error.", "error");
+                return;
+            }
+
+            const currentStarportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
+
+            let updatedHangar = [];
+            if (currentStarportId) {
+                updatedHangar = await cloudService.getHangarShips(userId, currentStarportId);
+            }
+
+            if (result.isActiveShip && gameManagerRef.current) {
+                // GameManager HUD / telemetry authority uses gm.stats, not just gm.ship.
+                if (gameManagerRef.current.stats && typeof gameManagerRef.current.stats === 'object') {
+                    gameManagerRef.current.stats.hp = result.nextHp;
+                    if (typeof result.maxHp === 'number') {
+                        gameManagerRef.current.stats.maxHp = result.maxHp;
+                    }
+                }
+
+                // Keep ship object in sync too for any code paths that still read from it.
+                if (gameManagerRef.current.ship) {
+                    gameManagerRef.current.ship.hp = result.nextHp;
+                    if (typeof result.maxHp === 'number') {
+                        gameManagerRef.current.ship.maxHp = result.maxHp;
+                    }
+                }
+
+                console.log('[Repair][Client] Applied repaired hull to active ship', {
+                    shipId,
+                    nextHp: result.nextHp,
+                    maxHp: result.maxHp,
+                    gmStatsHp: gameManagerRef.current.stats?.hp,
+                    gmStatsMaxHp: gameManagerRef.current.stats?.maxHp,
+                    gmShipHp: gameManagerRef.current.ship?.hp,
+                    gmShipMaxHp: gameManagerRef.current.ship?.maxHp
+                });
+            }
+
+            setGameState(prev => {
+                const nextOwnedShips = prev.ownedShips.map(s => {
+                    if (s.id === shipId) {
+                        return { ...s, hp: result.nextHp, maxHp: result.maxHp ?? s.maxHp };
+                    }
+                    return s;
+                });
+
+                const isNowActive = shipId === prev.activeShipId;
+                const nextHp = isNowActive ? result.nextHp : prev.hp;
+
+                return {
+                    ...prev,
+                    credits: typeof result.credits === 'number' ? result.credits : prev.credits,
+                    hp: nextHp,
+                    ownedShips: nextOwnedShips,
+                    hangarShips: updatedHangar.length > 0 ? updatedHangar.map(s => s.ship_config) : prev.hangarShips
+                };
+            });
+
+            showNotification(`REPAIR COMPLETE: Hull integrity restored. Deducted ${Number(result.repairCost || 0).toLocaleString()} Cr.`, "success");
+        } catch (error) {
+            console.error("[App] Repair operation failed:", error);
+            showNotification("REPAIR FAILED: Internal facility error. Credits not deducted.", "error");
+        }
+    };
+
+const handleUndock = () => {
     if (!gameState.activeShipId || !gameState.fittings) {
         // Prevent undocking while ship is still a placeholder
 if (gameState.shipName === "PENDING" || gameState.activeShipId === "PENDING") {
@@ -11755,15 +12149,23 @@ backendSocket.sendUndock(
         }
 
         if (item.type === 'ship') {
-            await transferShipToHangar({
-                item,
-                cloudUser,
-                starportId,
-                cloudService,
-                setGameState,
-                showNotification,
-                SHIP_REGISTRY
-            });
+            try {
+                const registry = SHIP_REGISTRY[item.type || item.item_id];
+                const shipToSave = {
+                    ...item,
+                    type: item.type || item.item_id,
+                    classId: registry?.classId || (item.type || item.item_id),
+                    isShip: true
+                };
+                await cloudService.saveToHangar(cloudUser.id, starportId, item.id, shipToSave);
+                setGameState(prev => ({ ...prev,
+                    ownedShips: prev.ownedShips.filter(s => s.id !== item.id),
+                    hangarShips: [...(prev.hangarShips || []), shipToSave]
+                }));
+                showNotification(`${item.name} transferred to hangar.`, "success");
+            } catch (err) {
+                showNotification("TRANSFER FAILED: Could not save to hangar.", "error");
+            }
             return;
         }
 
@@ -11824,14 +12226,27 @@ backendSocket.sendUndock(
         }
 
         if (item.type === 'ship') {
-            await transferShipFromHangar({
-                item,
-                cloudUser,
-                cloudService,
-                setGameState,
-                showNotification,
-                hydrateVessel
-            });
+            try {
+                await cloudService.removeFromHangar(cloudUser.id, item.id);
+                setGameState(prev => {
+                    const hydratedShip = hydrateVessel(item, item);
+                    const newState = {
+                        ...prev,
+                        hangarShips: prev.hangarShips.filter(s => s.id !== item.id),
+                        ownedShips: [...prev.ownedShips, hydratedShip]
+                    };
+                    
+                    // PERSISTENCE FIX: Sync manifest change to cloud immediately
+                    cloudService.updateCommanderData(cloudUser.id, {
+                        owned_ships: newState.ownedShips
+                    });
+                    
+                    return newState;
+                });
+                showNotification(`${item.name} activated from hangar.`, "success");
+            } catch (err) {
+                showNotification("TRANSFER FAILED: Could not remove from hangar.", "error");
+            }
             return;
         }
 
