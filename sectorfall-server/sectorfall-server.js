@@ -7738,13 +7738,14 @@ async function handleHello(socket, data) {
       validatedLock: null
     });
 
-    await hydratePlayerFromCommanderActiveShip(players.get(socket), { fillVitals: true, persistState: false });
+    const respawnResult = await finalizeHomeStarportRespawn(players.get(socket), defaultStarport);
 
-    console.log(`[Backend] ${userId} recovered from destroyed normal-space state -> docked at ${defaultStarport}`);
+    console.log(`[Backend] ${userId} recovered from destroyed normal-space state -> docked at ${respawnResult?.starport_id || defaultStarport}`);
 
     socket.send(JSON.stringify({
       type: "DOCKED",
-      starport_id: defaultStarport,
+      system_id: respawnResult?.system_id || defaultSystem,
+      starport_id: respawnResult?.starport_id || defaultStarport,
       hp: players.get(socket)?.hp,
       maxHp: players.get(socket)?.maxHp,
       shields: players.get(socket)?.shields,
@@ -7962,6 +7963,46 @@ async function handleHello(socket, data) {
 // DOCK — mark player docked + save last space snapshot + persist vitals
 // IMPORTANT: DO NOT hard-fail if Supabase is down.
 // -----------------------------------------------------
+
+async function handleRespawnHomeStarport(socket, data) {
+  const player = players.get(socket);
+  const userId = String(data?.userId || player?.userId || '').trim();
+  const requestId = data?.requestId || null;
+  if (!player || !userId || player.userId !== userId) return;
+
+  const commander = await loadCommanderDataRow(userId);
+  const requestedStarportId = normalizeStarportId(data?.starport_id || commander?.home_starport || player.starport_id || 'cygnus_prime_starport');
+  const respawnResult = await finalizeHomeStarportRespawn(player, requestedStarportId);
+
+  socket.send(JSON.stringify({
+    type: 'DOCKED',
+    system_id: respawnResult?.system_id || resolveSystemIdForStarport(requestedStarportId),
+    starport_id: respawnResult?.starport_id || requestedStarportId,
+    hp: player?.hp,
+    maxHp: player?.maxHp,
+    shields: player?.shields,
+    maxShields: player?.maxShields,
+    energy: player?.energy,
+    maxEnergy: player?.maxEnergy,
+    armor: player?.armor,
+    resistances: player?.resistances || {},
+    combat_stats: player?.combatStats || null,
+    fittings: player?.fittings || {}
+  }));
+
+  socket.send(JSON.stringify({
+    type: 'RESPAWN_HOME_RESULT',
+    requestId,
+    ok: !!respawnResult?.ok,
+    error: respawnResult?.ok ? null : (respawnResult?.error || 'respawn_failed'),
+    system_id: respawnResult?.system_id || resolveSystemIdForStarport(requestedStarportId),
+    starport_id: respawnResult?.starport_id || requestedStarportId,
+    serverTime: Date.now()
+  }));
+
+  await sendCommanderState(socket, userId, requestId);
+}
+
 async function handleDock(socket, data) {
   const player = players.get(socket);
   if (!player) return;
@@ -9922,6 +9963,8 @@ wss.on("connection", (socket) => {
         return await handleHello(socket, data);
       case "DOCK":
         return await handleDock(socket, data);
+      case "RESPAWN_HOME":
+        return await handleRespawnHomeStarport(socket, data);
       case "UNDOCK":
         return await handleUndock(socket, data);
       case "JOIN_SYSTEM":
@@ -10030,4 +10073,73 @@ wss.on("connection", (socket) => {
     }
     players.delete(socket);
   });
+})
+
+const STARPORT_SYSTEM_ID_MAP = Object.freeze({
+  cygnus_prime_starport: 'cygnus-prime',
+  iron_reach_starport: 'iron-reach',
+  obsidian_fringe_starport: 'obsidian-fringe',
+  aurora_outpost_starport: 'aurora-outpost',
+  vanta_edge_starport: 'vanta-edge'
 });
+
+function resolveSystemIdForStarport(starportId) {
+  const normalizedStarportId = normalizeStarportId(starportId);
+  return STARPORT_SYSTEM_ID_MAP[normalizedStarportId] || 'cygnus-prime';
+}
+
+function buildDockedRespawnTelemetry(starportId) {
+  const system_id = resolveSystemIdForStarport(starportId);
+  return { system_id, x: 150, y: 150, rot: 0, vx: 0, vy: 0 };
+}
+
+async function finalizeHomeStarportRespawn(player, requestedStarportId) {
+  if (!player?.userId) return { ok: false, error: 'invalid_player' };
+
+  const starport_id = normalizeStarportId(requestedStarportId) || normalizeStarportId('cygnus_prime_starport');
+  const system_id = resolveSystemIdForStarport(starport_id);
+  const telemetry = buildDockedRespawnTelemetry(starport_id);
+
+  player.system_id = system_id;
+  player.docked = true;
+  player.destroyed = false;
+  player.starport_id = starport_id;
+  player.x = telemetry.x;
+  player.y = telemetry.y;
+  player.rot = telemetry.rot;
+  player.vx = telemetry.vx;
+  player.vy = telemetry.vy;
+  player.lastSpaceTelemetry = telemetry;
+  clearValidatedLock(player);
+
+  await hydratePlayerFromCommanderActiveShip(player, { fillVitals: true, persistState: false });
+
+  const payload = {
+    player_id: player.userId,
+    ship_type: player.ship_type || 'ship_omni_scout',
+    system_id,
+    starport_id,
+    telemetry,
+    hull: typeof player.hp === 'number' ? player.hp : undefined,
+    maxHp: typeof player.maxHp === 'number' ? player.maxHp : undefined,
+    shields: typeof player.shields === 'number' ? player.shields : undefined,
+    maxShields: typeof player.maxShields === 'number' ? player.maxShields : undefined,
+    energy: typeof player.energy === 'number' ? player.energy : undefined,
+    maxEnergy: typeof player.maxEnergy === 'number' ? player.maxEnergy : undefined,
+    fittings: player.fittings || {},
+    updated_at: nowIso()
+  };
+
+  const { error } = await supabase
+    .from('ship_states_v2')
+    .upsert(payload, { onConflict: 'player_id' });
+
+  if (error) {
+    console.warn('[Respawn] Failed to persist home-starport dock state:', player.userId, error.message);
+    return { ok: false, error: 'persist_failed', starport_id, system_id, telemetry };
+  }
+
+  return { ok: true, starport_id, system_id, telemetry };
+}
+
+;

@@ -10604,11 +10604,18 @@ showStarportUI: function (starportId) {
         setBattlegroundExtractState(null);
         setBattlegroundState(prev => ({ ...prev, open: false, status: 'idle', currentInstanceId: null, bankedCredits: 0, choice: null, hud: { currentWave: 0, enemiesRemaining: 0, statusLabel: 'STANDBY' } }));
 
-        // 3. Teleport and Dock at Home Starport
+        // 3. Finalize authoritative home-starport respawn on the backend before showing docked UI
+        const respawnResult = await window.backendSocket?.requestRespawnHome?.({ starportId: homeStarport });
+        if (!respawnResult?.ok) {
+            console.error('[Respawn][Client] backend home-starport respawn failed:', respawnResult);
+            showNotification('RESPAWN FAILED: backend dock authority did not complete.', 'error');
+            return;
+        }
+
         if (gameManagerRef.current) {
-            await gameManagerRef.current.loadSystem(respawnSystemId, homeStarport);
+            await gameManagerRef.current.loadSystem(respawnResult.system_id || respawnSystemId, homeStarport);
             gameManagerRef.current.setDocked(true);
-            
+
             // Absolute Visibility Suppression: No ship should be rendered in space during docking
             if (gameManagerRef.current.ship?.sprite) {
                 gameManagerRef.current.ship.sprite.visible = false;
@@ -10616,7 +10623,7 @@ showStarportUI: function (starportId) {
                 gameManagerRef.current.ship.velocity.set(0, 0);
             }
         }
-        
+
         setIsDocked(true);
         showNotification(`Vessel lost. Respawning at Port ${homeStarport.replace(/_/g, ' ')}.`, "info");
     };

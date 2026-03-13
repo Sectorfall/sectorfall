@@ -142,6 +142,7 @@ export class BackendSocket {
     this._pendingActivateRequests = new Map();
     this._pendingFabricationRequests = new Map();
     this._pendingMarketRequests = new Map();
+    this._pendingRespawnRequests = new Map();
     this.arenaHooks = null;
     this.battlegroundHooks = null;
     this.instanceBoundaryHooks = null;
@@ -323,6 +324,10 @@ export class BackendSocket {
     switch (data.type) {
       case "DOCKED":
         this.handleDocked(data);
+        break;
+
+      case "RESPAWN_HOME_RESULT":
+        this.handleRespawnHomeResult(data);
         break;
 
       case "WELCOME":
@@ -1959,6 +1964,20 @@ if (fireSolution && typeof fireSolution === "object") {
     });
   }
 
+
+  handleRespawnHomeResult(data) {
+    try {
+      const requestId = data?.requestId;
+      if (!requestId) return;
+      const pending = this._pendingRespawnRequests.get(requestId);
+      if (!pending) return;
+      this._pendingRespawnRequests.delete(requestId);
+      pending.resolve(data);
+    } catch (err) {
+      console.warn('[Respawn][Client] failed to resolve respawn request:', err?.message || err);
+    }
+  }
+
   requestCommanderProfileUpdate({ commanderName = null, homeStarport = null, commanderStats = null } = {}) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId) return Promise.resolve(null);
     const requestId = `cmd-profile-${Date.now()}-${++this.seq}`;
@@ -2004,6 +2023,29 @@ if (fireSolution && typeof fireSolution === "object") {
           pending.resolve(null);
         }
       }, 6000);
+    });
+  }
+
+
+  requestRespawnHome({ starportId } = {}) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId) return Promise.resolve(null);
+    const requestId = `respawn-${Date.now()}-${++this.seq}`;
+    return new Promise((resolve) => {
+      this._pendingRespawnRequests.set(requestId, { resolve, createdAt: Date.now(), starportId });
+      this.socket.send(JSON.stringify({
+        type: 'RESPAWN_HOME',
+        requestId,
+        userId: this.userId,
+        starport_id: starportId,
+        clientTime: Date.now()
+      }));
+      setTimeout(() => {
+        const pending = this._pendingRespawnRequests.get(requestId);
+        if (pending) {
+          this._pendingRespawnRequests.delete(requestId);
+          pending.resolve(null);
+        }
+      }, 7000);
     });
   }
 
