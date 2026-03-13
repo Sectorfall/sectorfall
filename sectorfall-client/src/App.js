@@ -29,6 +29,7 @@ import { createAuthoritativeShipStateHandler } from './features/hangar/authorita
 import { getModuleResourceUsage, getLiveShipResources, getSlotClass, getItemSlotClass, normalizeModuleFamilyKey, normalizeModuleSizeKey, normalizeModuleRarityKey, deriveCanonicalModuleId, normalizeFittedModuleIdentity, hydrateFittedModule, canFit } from './features/fitting/fittingHelpers.js';
 import { applyInstallFittingState, applyUnfitFittingState } from './features/fitting/fittingActions.js';
 import { useFittingState, buildFittingSelectMenuProps } from './features/fitting/fittingState.js';
+import { getFormattedFittingTitle, getFittingHardwareTitle, evaluateFittingCandidate, buildInstallFittingWarning } from './features/fitting/fittingPreview.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -7485,29 +7486,12 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
 };
 
 const FittingSelectMenu = ({ slot, equipped, inventory, onSelect, onUnfit, onToggleGroup, onClose, gameState, isDocked }) => {
-    const getFormattedTitle = () => {
-        if (slot.type === 'outfit') return `BODY SLOT: ${slot.fullName}`;
-        if (slot.type === 'implant') return `IMPLANT LOCATION: ${slot.fullName}`;
-        if (slot.type === 'weapon') return `HARDPOINT: WEAPON ${slot.id.replace('weapon', '')}`;
-        if (slot.type === 'mining') return `HARDPOINT: MINING LASER`;
-        if (slot.type === 'active') return `SYSTEM: CORE FITTING`;
-        if (slot.type === 'passive') return `SYSTEM: UTILITY FITTING`;
-        if (slot.type === 'rig') return `HULL: RIG FITTING`;
-        return `HARDPOINT: ${slot.type.toUpperCase()}`;
-    };
-
-    const formattedTitle = getFormattedTitle();
+    const formattedTitle = getFormattedFittingTitle(slot);
     const isShipFitting = slot.type !== 'outfit' && slot.type !== 'implant';
     const isWeaponSlot = slot.type === 'weapon' || slot.type === 'mining';
 
     const renderHardwareSelection = () => {
-        const getHardwareTitle = () => {
-            if (slot.type === 'active') return `CORE HARDWARE`;
-            if (slot.type === 'passive') return `UTILITY HARDWARE`;
-            return `${slot.type.toUpperCase()} HARDWARE`;
-        };
-
-        const hardwareTitle = getHardwareTitle();
+        const hardwareTitle = getFittingHardwareTitle(slot);
 
         return React.createElement(React.Fragment, null,
             React.createElement('div', {
@@ -7524,32 +7508,22 @@ const FittingSelectMenu = ({ slot, equipped, inventory, onSelect, onUnfit, onTog
                 inventory.length === 0 ? 
                 React.createElement('div', { style: { color: '#444', fontSize: '11px', textAlign: 'center', padding: '20px' } }, '--- NO COMPATIBLE COMPONENT DETECTED ---') :
                 inventory.map((item, i) => {
-                    let pwrError = false;
-                    let cpuError = false;
-
-                    if (isShipFitting) {
-                        const nextFittings = { ...gameState.fittings, [slot.id]: item };
-                        const { power, cpu } = getLiveShipResources(nextFittings);
-                        pwrError = power > gameState.maxPowerGrid;
-                        cpuError = cpu > gameState.maxCpu;
-                    }
-
-                    const stats = getCommanderStats(gameState);
-                    let statError = false;
-                    if (item.requiredStatType && item.requiredStatValue) {
-                        const currentStatValue = item.requiredStatType === 'Neural Stability' ? stats.neuralStability :
-                                               item.requiredStatType === 'Bio-Tolerance' ? stats.bioTolerance :
-                                               item.requiredStatType === 'Motor Integration' ? stats.motorIntegration : 0;
-                        if (currentStatValue < item.requiredStatValue) {
-                            statError = true;
-                        }
-                    }
+                    const { pwrError, cpuError, statError, buttonTitle, actionLabel } = evaluateFittingCandidate({
+                        item,
+                        slot,
+                        gameState,
+                        isDocked,
+                        equipped,
+                        isShipFitting,
+                        getLiveShipResources,
+                        getCommanderStats
+                    });
 
                     return React.createElement('button', {
                         key: i,
                         onClick: () => isDocked && !statError && onSelect(item),
                         onPointerDown: (e) => e.stopPropagation(),
-                        title: !isDocked ? "Module fitting is only available while docked at a Starport." : (statError ? `Insufficient ${item.requiredStatType}` : ""),
+                        title: buttonTitle,
                         style: {
                             padding: '10px',
                             borderBottom: '1px solid #222',
@@ -7577,9 +7551,7 @@ const FittingSelectMenu = ({ slot, equipped, inventory, onSelect, onUnfit, onTog
                                     style: { fontSize: '8px', padding: '1px 4px', background: 'rgba(0, 204, 255, 0.2)', color: '#00ccff', borderRadius: '2px', border: '1px solid #00ccff44' } 
                                 }, 'STORAGE')
                             ),
-                            React.createElement('span', { style: { color: !isDocked ? '#555' : ((pwrError || cpuError || statError) ? '#ff4444' : '#00ff00'), fontWeight: 'bold', fontSize: '10px' } }, 
-                                !isDocked ? 'LOCKED' : (statError ? 'STAT REQ' : ((pwrError || cpuError) ? 'LIMIT EXCEEDED' : (equipped ? 'SWAP' : 'INSTALL')))
-                            )
+                            React.createElement('span', { style: { color: !isDocked ? '#555' : ((pwrError || cpuError || statError) ? '#ff4444' : '#00ff00'), fontWeight: 'bold', fontSize: '10px' } }, actionLabel)
                         ),
                         React.createElement('div', { style: { display: 'flex', gap: '10px', fontSize: '9px', color: '#888', flexWrap: 'wrap' } },
                             React.createElement(ItemSpecificationList, { item: item })
@@ -10457,11 +10429,13 @@ showStarportUI: function (starportId) {
             nextCpu = resources.cpu;
 
             if (nextPowerGrid > gameState.maxPowerGrid || nextCpu > gameState.maxCpu) {
-                setFittingWarning({
-                    moduleName: item.name,
-                    powerDeficit: Math.max(0, nextPowerGrid - gameState.maxPowerGrid),
-                    cpuDeficit: Math.max(0, nextCpu - gameState.maxCpu)
-                });
+                setFittingWarning(buildInstallFittingWarning({
+                    item,
+                    nextPowerGrid,
+                    nextCpu,
+                    maxPowerGrid: gameState.maxPowerGrid,
+                    maxCpu: gameState.maxCpu
+                }));
                 return;
             }
         }
