@@ -27,7 +27,7 @@ const getAuthoritativeNumber = (combatStats, keys = [], fallback = 0) => {
 export const aggregateShipStats = (ship, fittings) => {
     if (!ship) return null;
     
-    const shipConfig = SHIP_REGISTRY[ship.type] || {};
+    const shipConfig = SHIP_REGISTRY[ship.type] || SHIP_REGISTRY[String(ship.type || '').toLowerCase()] || {};
     const shipFittings = fittings || ship.fittings || {};
     const combatStats = getAuthoritativeCombatStats(ship);
     
@@ -201,22 +201,23 @@ export const aggregateShipStats = (ship, fittings) => {
         avgProjectileVelocity /= weaponCount;
     }
 
-    // EHP and resists must prefer authoritative backend combat stats.
-    const authoritativeRes = (combatStats.resistances && typeof combatStats.resistances === 'object')
-        ? combatStats.resistances
-        : ((ship.resistances && typeof ship.resistances === 'object') ? ship.resistances : {});
-    const baseShipHP = getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.maxHp === 'number' ? ship.maxHp : (typeof ship.hp === 'number' ? ship.hp : 0));
+    // EHP and Resists with Catalyst Modifiers applied
+    const authoritativeRes = (ship.resistances && typeof ship.resistances === 'object')
+        ? ship.resistances
+        : ((combatStats.resistances && typeof combatStats.resistances === 'object') ? combatStats.resistances : {});
+    const baseShipHP = typeof ship.maxHp === 'number'
+        ? ship.maxHp
+        : getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.hp === 'number' ? ship.hp : 0);
     const finalHP = baseShipHP * (1 + hpBonus);
-    const shieldCapacity = getAuthoritativeNumber(combatStats, ['maxShields', 'shieldCapacity'], typeof ship.maxShields === 'number' ? ship.maxShields : (typeof ship.shields === 'number' ? ship.shields : 0));
-    const clampRes = (value) => Math.max(0, Math.min(0.95, Number(value || 0)));
-    const finalKinRes = clampRes(Number(authoritativeRes.kinetic ?? ship.kineticRes ?? 0) + kinResBonus);
-    const finalThermRes = clampRes(Number(authoritativeRes.thermal ?? ship.thermalRes ?? 0) + thermResBonus);
-    const finalBlastRes = clampRes(Number(authoritativeRes.blast ?? ship.blastRes ?? 0) + blastResBonus);
+    const shieldCapacity = typeof ship.maxShields === 'number'
+        ? ship.maxShields
+        : getAuthoritativeNumber(combatStats, ['maxShields', 'shieldCapacity'], typeof ship.shields === 'number' ? ship.shields : 0);
+    const finalKinRes = (typeof ship.kineticRes === 'number' ? ship.kineticRes : Number(authoritativeRes.kinetic ?? 0)) + kinResBonus;
+    const finalThermRes = (typeof ship.thermalRes === 'number' ? ship.thermalRes : Number(authoritativeRes.thermal ?? 0)) + thermResBonus;
+    const finalBlastRes = (typeof ship.blastRes === 'number' ? ship.blastRes : Number(authoritativeRes.blast ?? 0)) + blastResBonus;
 
     const avgRes = (finalKinRes + finalThermRes + finalBlastRes) / 3;
-    const hullEhp = finalHP / Math.max(0.01, 1 - avgRes);
-    const shieldEhp = shieldCapacity / Math.max(0.01, 1 - avgRes);
-    const ehp = hullEhp + shieldEhp;
+    const ehp = (finalHP + shieldCapacity) / Math.max(0.01, 1 - avgRes);
 
     // Shield restoration stats (aggregated from fittings)
     const baseShieldRegen = Object.values(shipFittings).reduce((sum, m) => sum + (m?.type === 'shield' ? (m.rechargeRate || 0) : 0), 0);
@@ -229,8 +230,8 @@ export const aggregateShipStats = (ship, fittings) => {
         shipConfig,
         hull: {
             current: finalHP,
-            max: finalHP,
-            armor: getAuthoritativeNumber(combatStats, ['armor'], typeof ship.armor === 'number' ? ship.armor : 0),
+            max: getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.maxHp === 'number' ? ship.maxHp : 0) * (1 + hpBonus),
+            armor: ((typeof ship.armor === 'number' ? ship.armor : getAuthoritativeNumber(combatStats, ['armor'], 0)) * 100),
             ehp
         },
         resists: {
@@ -240,7 +241,7 @@ export const aggregateShipStats = (ship, fittings) => {
             average: avgRes
         },
         shields: {
-            max: shieldCapacity,
+            max: ship.maxShields || 0,
             regen: finalShieldRegen,
             delay: finalShieldDelay
         },
