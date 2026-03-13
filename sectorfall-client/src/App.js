@@ -28,6 +28,7 @@ import { PveBattlegroundMenu } from './battlegrounds/PveBattlegroundMenu.js';
 import { createAuthoritativeShipStateHandler } from './features/hangar/authoritativeShipSync.js';
 import { getModuleResourceUsage, getLiveShipResources, getSlotClass, getItemSlotClass, normalizeModuleFamilyKey, normalizeModuleSizeKey, normalizeModuleRarityKey, deriveCanonicalModuleId, normalizeFittedModuleIdentity, hydrateFittedModule, canFit } from './features/fitting/fittingHelpers.js';
 import { applyInstallFittingState, applyUnfitFittingState } from './features/fitting/fittingActions.js';
+import { useFittingState, buildFittingSelectMenuProps } from './features/fitting/fittingState.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -8479,7 +8480,7 @@ const handleEnterArena = () => {
     const [isEditingName, setIsEditingName] = useState(false);
     const [securityError, setSecurityError] = useState(null);
     const [fittingWarning, setFittingWarning] = useState(null);
-    const [activeFittingSlot, setActiveFittingSlot] = useState(null);
+    const { activeFittingSlot, setActiveFittingSlot, clearActiveFittingSlot } = useFittingState();
     const [notifications, setNotifications] = useState([]);
     const lastNotificationTimeRef = useRef(0);
     const [isDocked, setIsDocked] = useState(true);
@@ -12827,35 +12828,16 @@ backendSocket.sendUndock(
             onClose: () => setActivePanel(null) 
         }),
 
-        activeFittingSlot && React.createElement(FittingSelectMenu, {
-            slot: activeFittingSlot,
-            equipped: (activeFittingSlot.type === 'outfit' ? gameState.commanderOutfit[activeFittingSlot.id] : 
-                       (activeFittingSlot.type === 'implant' ? gameState.commanderImplants[activeFittingSlot.id] : 
-                        gameState.fittings[activeFittingSlot.id])),
-            inventory: [
-                ...gameState.inventory.map(i => ({ ...i, location: 'cargo' })),
-                ...(isDocked && SYSTEM_TO_STARPORT[gameState.currentSystem?.id] ? (gameState.storage[SYSTEM_TO_STARPORT[gameState.currentSystem?.id]] || []).map(i => ({ ...i, location: 'storage' })) : [])
-            ].filter(item => {
-                if (activeFittingSlot.type === 'weapon') {
-                    return item.type === 'weapon' || item.type === 'mining';
-                }
-                if (activeFittingSlot.type === 'active') {
-                    // Core slots allow Shields and other Active components (Drones moved to Utility)
-                    return item.type === 'active' || item.type === 'shield';
-                }
-                if (activeFittingSlot.type === 'passive') {
-                    // Utility slots allow Thrusters, Passive components, and all Drone modules
-                    return item.type === 'passive' || item.type === 'thruster' || item.type === 'drone-module';
-                }
-                return item.type === activeFittingSlot.type;
-            }),
+        activeFittingSlot && React.createElement(FittingSelectMenu, buildFittingSelectMenuProps({
+            activeFittingSlot,
+            gameState,
+            isDocked,
+            systemToStarport: SYSTEM_TO_STARPORT,
             onSelect: handleInstallFitting,
             onUnfit: handleUnfitFitting,
             onToggleGroup: handleToggleWeaponGroup,
-            onClose: () => setActiveFittingSlot(null),
-            gameState: gameState,
-            isDocked: isDocked
-        }),
+            onClose: clearActiveFittingSlot
+        })),
 
         gameState.jumpDrive.active && React.createElement(JumpOverlay, {
             remaining: gameState.jumpDrive.remaining,
