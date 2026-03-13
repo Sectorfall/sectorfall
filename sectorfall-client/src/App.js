@@ -31,6 +31,7 @@ import { applyInstallFittingState, applyUnfitFittingState } from './features/fit
 import { useFittingState, buildFittingSelectMenuProps } from './features/fitting/fittingState.js';
 import { getFormattedFittingTitle, getFittingHardwareTitle, evaluateFittingCandidate, buildInstallFittingWarning } from './features/fitting/fittingPreview.js';
 import { canItemsStackForTransfer, mergeTransferredItemIntoList, removeSingleTransferredItemFromList, calculateCargoTotals } from './features/inventory/inventoryHelpers.js';
+import { buildTransferToStationState, buildTransferToShipState, buildDockedCargoCloudPayload } from './features/inventory/inventoryActions.js';
 import { useCargoMenuState } from './features/inventory/inventoryState.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
@@ -11577,9 +11578,13 @@ backendSocket.sendUndock(
         }
 
         setGameState(prev => {
-            const nextInventory = removeSingleTransferredItemFromList(prev.inventory, item);
-            const nextStationStorage = mergeTransferredItemIntoList(prev.storage[starportId] || [], item);
-            const { weight: nextShipWeight, volume: nextShipVolume } = calculateCargoTotals(nextInventory);
+            const {
+                nextInventory,
+                nextStationStorage,
+                nextShipWeight,
+                nextShipVolume,
+                nextState
+            } = buildTransferToStationState(prev, item, starportId);
 
             // Notify Engine
             if (gameManagerRef.current) {
@@ -11590,29 +11595,17 @@ backendSocket.sendUndock(
 
             // Push to Cloud
             cloudService.saveInventoryState(cloudUser.id, starportId, nextStationStorage, "transferToStation");
-            cloudService.saveToCloud(cloudUser.id, starportId, {
-                ship_type: (prev.ownedShips || []).find(s => s.id === prev.activeShipId)?.type || prev.shipClass,
-                cargo: nextInventory,
-                fittings: prev.fittings,
-                system_id: currentSystemId,
-                isDocked: true,
-                telemetry: {
-                    ...(gameManagerRef.current?.getTelemetry() || {}),
-                    cargo: nextInventory,
-                    fittings: prev.fittings,
-                    system_id: currentSystemId,
-                    isDocked: true,
-                    docked: true
-                }
-            });
+            cloudService.saveToCloud(
+                cloudUser.id,
+                starportId,
+                buildDockedCargoCloudPayload(prev, {
+                    nextInventory,
+                    currentSystemId,
+                    telemetry: gameManagerRef.current?.getTelemetry() || {}
+                })
+            );
 
-            return {
-                ...prev,
-                inventory: nextInventory,
-                storage: { ...prev.storage, [starportId]: nextStationStorage },
-                currentCargoWeight: nextShipWeight,
-                currentCargoVolume: nextShipVolume
-            };
+            return nextState;
         });
 
         showNotification(`${item.name} transferred to storage bay.`, "success");
@@ -11658,9 +11651,13 @@ backendSocket.sendUndock(
         }
 
         setGameState(prev => {
-            const nextStationStorage = removeSingleTransferredItemFromList(prev.storage[starportId] || [], item);
-            const nextInventory = mergeTransferredItemIntoList(prev.inventory, item);
-            const { weight: nextShipWeight, volume: nextShipVolume } = calculateCargoTotals(nextInventory);
+            const {
+                nextInventory,
+                nextStationStorage,
+                nextShipWeight,
+                nextShipVolume,
+                nextState
+            } = buildTransferToShipState(prev, item, starportId);
 
             // Notify Engine
             if (gameManagerRef.current) {
@@ -11671,29 +11668,17 @@ backendSocket.sendUndock(
 
             // Push to Cloud
             cloudService.saveInventoryState(cloudUser.id, starportId, nextStationStorage, "transferToShip");
-            cloudService.saveToCloud(cloudUser.id, starportId, {
-                ship_type: (prev.ownedShips || []).find(s => s.id === prev.activeShipId)?.type || prev.shipClass,
-                cargo: nextInventory,
-                fittings: prev.fittings,
-                system_id: currentSystemId,
-                isDocked: true,
-                telemetry: {
-                    ...(gameManagerRef.current?.getTelemetry() || {}),
-                    cargo: nextInventory,
-                    fittings: prev.fittings,
-                    system_id: currentSystemId,
-                    isDocked: true,
-                    docked: true
-                }
-            });
+            cloudService.saveToCloud(
+                cloudUser.id,
+                starportId,
+                buildDockedCargoCloudPayload(prev, {
+                    nextInventory,
+                    currentSystemId,
+                    telemetry: gameManagerRef.current?.getTelemetry() || {}
+                })
+            );
 
-            return {
-                ...prev,
-                inventory: nextInventory,
-                storage: { ...prev.storage, [starportId]: nextStationStorage },
-                currentCargoWeight: nextShipWeight,
-                currentCargoVolume: nextShipVolume
-            };
+            return nextState;
         });
 
         showNotification(`${item.name} transferred to ship cargo.`, "success");
