@@ -27,6 +27,7 @@ import { ArenaMenu } from './arena/ArenaMenu.js';
 import { PveBattlegroundMenu } from './battlegrounds/PveBattlegroundMenu.js';
 import { createAuthoritativeShipStateHandler } from './features/hangar/authoritativeShipSync.js';
 import { getModuleResourceUsage, getLiveShipResources, getSlotClass, getItemSlotClass, normalizeModuleFamilyKey, normalizeModuleSizeKey, normalizeModuleRarityKey, deriveCanonicalModuleId, normalizeFittedModuleIdentity, hydrateFittedModule, canFit } from './features/fitting/fittingHelpers.js';
+import { applyInstallFittingState, applyUnfitFittingState } from './features/fitting/fittingActions.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -10429,14 +10430,11 @@ showStarportUI: function (starportId) {
 
     const handleInstallFitting = (item) => {
         if (!activeFittingSlot) return;
-        
-        const isCommanderFitting = activeFittingSlot.type === 'outfit' || activeFittingSlot.type === 'implant';
-        const fittingCategory = activeFittingSlot.type === 'outfit' ? 'commanderOutfit' : 'commanderImplants';
 
-        // Calculate fresh resources for validation
+        const isCommanderFitting = activeFittingSlot.type === 'outfit' || activeFittingSlot.type === 'implant';
         let nextPowerGrid = gameState.currentPowerGrid;
         let nextCpu = gameState.currentCpu;
-        
+
         if (!isCommanderFitting) {
             const shipConfig = SHIP_REGISTRY[gameState.shipClass];
             const slotCheck = canFit({
@@ -10444,7 +10442,6 @@ showStarportUI: function (starportId) {
                 slotId: activeFittingSlot.id,
                 shipConfig,
                 currentFittings: gameState.fittings,
-                // PG/CPU warning UI is handled below; here we only enforce slot typing.
                 maxPG: Number.POSITIVE_INFINITY,
                 maxCPU: Number.POSITIVE_INFINITY
             });
@@ -10468,173 +10465,34 @@ showStarportUI: function (starportId) {
             }
         }
 
-        setGameState(prev => {
-            const currentSystemId = prev.currentSystem?.id;
-            const starportId = SYSTEM_TO_STARPORT[currentSystemId];
-            const userId = cloudUser?.id;
+        setGameState(prev => applyInstallFittingState(prev, {
+            item,
+            activeFittingSlot,
+            cloudUserId: cloudUser?.id,
+            systemToStarport: SYSTEM_TO_STARPORT,
+            hydrateFittedModule,
+            getLiveShipResources,
+            cloudService,
+            gameManager: gameManagerRef.current
+        }));
 
-            let nextInventory = [...prev.inventory];
-            let nextStorage = starportId ? [...(prev.storage[starportId] || [])] : [];
-            let updateObj = { 
-                inventory: nextInventory, 
-                storage: starportId ? { ...prev.storage, [starportId]: nextStorage } : prev.storage 
-            };
-
-            if (isCommanderFitting) {
-                const nextCommanderFittings = { ...prev[fittingCategory] };
-                const oldItem = nextCommanderFittings[activeFittingSlot.id];
-                if (oldItem) nextInventory.push(oldItem);
-                
-                // Remove from either inventory or storage based on location marker
-                if (item.location === 'storage') {
-                    const itemIndex = nextStorage.findIndex(i => i.id === item.id);
-                    if (itemIndex > -1) nextStorage.splice(itemIndex, 1);
-                } else {
-                    const itemIndex = nextInventory.findIndex(i => i.id === item.id);
-                    if (itemIndex > -1) nextInventory.splice(itemIndex, 1);
-                }
-                
-                nextCommanderFittings[activeFittingSlot.id] = item;
-                updateObj[fittingCategory] = nextCommanderFittings;
-            } else {
-                const nextFittings = { ...prev.fittings };
-                const oldItem = nextFittings[activeFittingSlot.id];
-                // Uninstalled items always go back to ship cargo (inventory)
-                if (oldItem) nextInventory.push(oldItem);
-                
-                // Remove from either inventory or storage based on location marker
-                if (item.location === 'storage') {
-                    const itemIndex = nextStorage.findIndex(i => i.id === item.id);
-                    if (itemIndex > -1) nextStorage.splice(itemIndex, 1);
-                } else {
-                    const itemIndex = nextInventory.findIndex(i => i.id === item.id);
-                    if (itemIndex > -1) nextInventory.splice(itemIndex, 1);
-                }
-                
-                const hydratedItem = hydrateFittedModule(item);
-                nextFittings[activeFittingSlot.id] = hydratedItem;
-                updateObj.fittings = nextFittings;
-
-                // PERSISTENCE FIX: Update the fittings in ownedShips as well
-                updateObj.ownedShips = prev.ownedShips.map(ship => 
-                    ship.id === prev.activeShipId ? { ...ship, fittings: nextFittings } : ship
-                );
-                
-                // Final re-sync of usage stats
-                const finalResources = getLiveShipResources(nextFittings);
-                updateObj.currentPowerGrid = finalResources.power;
-                updateObj.currentCpu = finalResources.cpu;
-
-                // Sync engine immediately
-                if (gameManagerRef.current) {
-                    gameManagerRef.current.syncFittings(nextFittings);
-                }
-            }
-            
-            // AUTHORITATIVE PERSISTENCE HANDSHAKE
-            // Immediately sync critical configuration changes to the cloud
-            if (userId) {
-                // 1. Update Inventory / Storage
-                if (starportId) {
-                    cloudService.saveInventoryState(userId, starportId, nextStorage, "handleInstallFitting_storage");
-                }
-                
-                // 2. Update Fleet Configuration (Commander Data)
-                const nextOwnedShips = updateObj.ownedShips || prev.ownedShips;
-                cloudService.updateCommanderData(userId, {
-                    owned_ships: nextOwnedShips,
-                    active_ship_id: prev.activeShipId
-                });
-
-                // 3. Update active ship cargo
-                cloudService.saveToCloud(userId, starportId, {
-                    ship_type: (prev.ownedShips || []).find(s => s.id === prev.activeShipId)?.type || prev.shipClass,
-                    telemetry: {
-                        ...(gameManagerRef.current?.getTelemetry() || {}),
-                        cargo: nextInventory,
-                        fittings: updateObj.fittings || prev.fittings
-                    }
-                });
-            }
-
-            return { ...prev, ...updateObj };
-        });
-        
         setActiveFittingSlot(null);
         showNotification(`${item.name} installed successfully.`, "info");
     };
 
     const handleUnfitFitting = (slotId) => {
         if (!activeFittingSlot) return;
-        const isCommanderFitting = activeFittingSlot.type === 'outfit' || activeFittingSlot.type === 'implant';
-        const fittingCategory = activeFittingSlot.type === 'outfit' ? 'commanderOutfit' : 'commanderImplants';
 
-        setGameState(prev => {
-            const currentSystemId = prev.currentSystem?.id;
-            const starportId = SYSTEM_TO_STARPORT[currentSystemId] || prev.homeStarport;
-            const userId = cloudUser?.id;
+        setGameState(prev => applyUnfitFittingState(prev, {
+            slotId,
+            activeFittingSlot,
+            cloudUserId: cloudUser?.id,
+            systemToStarport: SYSTEM_TO_STARPORT,
+            getLiveShipResources,
+            cloudService,
+            gameManager: gameManagerRef.current
+        }));
 
-            let nextInventory = [...prev.inventory];
-            let updateObj = { inventory: nextInventory };
-
-            if (isCommanderFitting) {
-                const nextCommanderFittings = { ...prev[fittingCategory] };
-                const oldItem = nextCommanderFittings[slotId];
-                if (!oldItem) return prev;
-                // Uninstalled items always go back to ship cargo (inventory)
-                nextInventory.push(oldItem);
-                nextCommanderFittings[slotId] = null;
-                updateObj[fittingCategory] = nextCommanderFittings;
-            } else {
-                const nextFittings = { ...prev.fittings };
-                const oldItem = nextFittings[slotId];
-                if (!oldItem) return prev;
-                
-                // Uninstalled items always go back to ship cargo (inventory)
-                nextInventory.push(oldItem);
-                nextFittings[slotId] = null;
-                updateObj.fittings = nextFittings;
-
-                // PERSISTENCE FIX: Update the fittings in ownedShips as well
-                updateObj.ownedShips = prev.ownedShips.map(ship => 
-                    ship.id === prev.activeShipId ? { ...ship, fittings: nextFittings } : ship
-                );
-                
-                // Recalculate fresh usage stats
-                const finalResources = getLiveShipResources(nextFittings);
-                updateObj.currentPowerGrid = finalResources.power;
-                updateObj.currentCpu = finalResources.cpu;
-
-                // Sync engine immediately
-                if (gameManagerRef.current) {
-                    gameManagerRef.current.syncFittings(nextFittings);
-                }
-            }
-
-            // AUTHORITATIVE PERSISTENCE HANDSHAKE
-            // Immediately sync critical configuration changes to the cloud
-            if (userId) {
-                // 1. Update Fleet Configuration (Commander Data)
-                const nextOwnedShips = updateObj.ownedShips || prev.ownedShips;
-                cloudService.updateCommanderData(userId, {
-                    owned_ships: nextOwnedShips,
-                    active_ship_id: prev.activeShipId
-                });
-
-                // 2. Update active ship cargo and fittings in ship_states
-                cloudService.saveToCloud(userId, starportId, {
-                    ship_type: (prev.ownedShips || []).find(s => s.id === prev.activeShipId)?.type || prev.shipClass,
-                    telemetry: {
-                        ...(gameManagerRef.current?.getTelemetry() || {}),
-                        cargo: nextInventory,
-                        fittings: updateObj.fittings || prev.fittings
-                    }
-                });
-            }
-
-            return { ...prev, ...updateObj };
-        });
-        
         setActiveFittingSlot(null);
         showNotification("Module uninstalled to ship cargo.", "info");
     };
