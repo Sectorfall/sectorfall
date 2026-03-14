@@ -4595,6 +4595,7 @@ function clearPlayerActiveShipRuntime(player) {
   player.maxShields = 0;
   player.energy = 0;
   player.maxEnergy = 0;
+  player.cargo = [];
   player._fittingsSignature = computeFittingsSignature(player.fittings);
 }
 
@@ -10365,6 +10366,7 @@ async function finalizeHomeStarportRespawn(player, requestedStarportId) {
     maxShields: typeof player.maxShields === 'number' ? player.maxShields : 0,
     energy: typeof player.energy === 'number' ? player.energy : 0,
     maxEnergy: typeof player.maxEnergy === 'number' ? player.maxEnergy : 0,
+    cargo: Array.isArray(player.cargo) ? player.cargo : [],
     fittings: player.fittings || {},
     updated_at: nowIso()
   };

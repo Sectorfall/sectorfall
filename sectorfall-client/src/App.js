@@ -8751,12 +8751,17 @@ useEffect(() => {
         const hasExplicitActiveShipField = Object.prototype.hasOwnProperty.call(detail, 'active_ship_id');
         const nextActiveShipId = isPersistableShipId(detail.active_ship_id) ? detail.active_ship_id : null;
         const clearActiveShip = hasExplicitActiveShipField && !nextActiveShipId && !activeShipStats;
+        const authoritativeOwnedShips = Array.isArray(detail.owned_ships)
+            ? detail.owned_ships.map((ship) => hydrateVessel(ship, ship))
+            : null;
+
         setGameState(prev => ({
             ...prev,
             credits: typeof detail.credits === 'number' ? detail.credits : prev.credits,
             experience: typeof detail.experience === 'number' ? detail.experience : prev.experience,
             level: typeof detail.level === 'number' ? detail.level : prev.level,
             commanderName: nextCommanderName || prev.commanderName,
+            ownedShips: authoritativeOwnedShips || prev.ownedShips,
             activeShipId: hasExplicitActiveShipField ? nextActiveShipId : prev.activeShipId,
             hp: clearActiveShip ? 0 : (typeof activeShipStats?.hp === 'number' ? activeShipStats.hp : prev.hp),
             maxHp: clearActiveShip ? 0 : (typeof activeShipStats?.maxHp === 'number' ? activeShipStats.maxHp : (typeof activeShipCombatStats?.maxHp === 'number' ? activeShipCombatStats.maxHp : prev.maxHp)),
@@ -8767,7 +8772,10 @@ useEffect(() => {
             armor: clearActiveShip ? 0 : (typeof activeShipStats?.armor === 'number' ? activeShipStats.armor : (typeof activeShipCombatStats?.armor === 'number' ? activeShipCombatStats.armor : prev.armor)),
             resistances: clearActiveShip ? {} : (activeShipStats?.resistances && typeof activeShipStats.resistances === 'object' ? activeShipStats.resistances : prev.resistances),
             combatStats: clearActiveShip ? null : (activeShipCombatStats || prev.combatStats),
-            fittings: clearActiveShip ? {} : (activeShipFittings || prev.fittings)
+            fittings: clearActiveShip ? {} : (activeShipFittings || prev.fittings),
+            inventory: clearActiveShip ? [] : prev.inventory,
+            currentCargoWeight: clearActiveShip ? 0 : prev.currentCargoWeight,
+            currentCargoVolume: clearActiveShip ? 0 : prev.currentCargoVolume
         }));
 
         if (clearActiveShip && gameManagerRef.current) {
@@ -10605,15 +10613,23 @@ showStarportUI: function (starportId) {
                             cloudService.getInventoryState(playerId, starportId),
                             cloudService.getHangarShips(playerId, starportId)
                         ]);
+                        const hydratedHangarShips = (kitHangar || []).map(h => ({
+                            ...h.ship_config,
+                            id: h.ship_id,
+                            dbId: h.id
+                        }));
                         setGameState(prev => ({
                             ...prev,
                             storage: { ...prev.storage, [starportId]: (Array.isArray(kitInventory?.items) ? kitInventory.items : []).filter(i => i.type !== 'ship') },
-                            hangarShips: (kitHangar || []).map(h => ({
-                                ...h.ship_config,
-                                id: h.ship_id,
-                                dbId: h.id
-                            }))
+                            hangarShips: hydratedHangarShips,
+                            ownedShips: hydratedHangarShips.map(ship => hydrateVessel(ship, ship))
                         }));
+                        try {
+                            const nextCommanderState = await backendSocket.requestCommanderState();
+                            if (nextCommanderState && typeof nextCommanderState === 'object') {
+                                window.dispatchEvent(new CustomEvent('sectorfall:commander_state', { detail: nextCommanderState }));
+                            }
+                        } catch {}
                     }
                 }
             } catch (err) {
