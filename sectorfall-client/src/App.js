@@ -27,7 +27,7 @@ import { ArenaMenu } from './arena/ArenaMenu.js';
 import { PveBattlegroundMenu } from './battlegrounds/PveBattlegroundMenu.js';
 import { createAuthoritativeShipStateHandler } from './features/hangar/authoritativeShipSync.js';
 import { getModuleResourceUsage, getLiveShipResources, getSlotClass, getItemSlotClass, normalizeModuleFamilyKey, normalizeModuleSizeKey, normalizeModuleRarityKey, deriveCanonicalModuleId, normalizeFittedModuleIdentity, hydrateFittedModule, canFit, getVisualFittingSlotsForShip } from './features/fitting/fittingHelpers.js';
-import { applyInstallFittingState, applyUnfitFittingState } from './features/fitting/fittingActions.js';
+import { applyCommanderInstallFittingState, applyCommanderUnfitFittingState, applyAuthoritativeFittingResult } from './features/fitting/fittingActions.js';
 import { useFittingState, buildFittingSelectMenuProps } from './features/fitting/fittingState.js';
 import { getFormattedFittingTitle, getFittingHardwareTitle, evaluateFittingCandidate, buildInstallFittingWarning } from './features/fitting/fittingPreview.js';
 import { canItemsStackForTransfer, mergeTransferredItemIntoList, removeSingleTransferredItemFromList, calculateCargoTotals } from './features/inventory/inventoryHelpers.js';
@@ -36,8 +36,8 @@ import { useCargoMenuState } from './features/inventory/inventoryState.js';
 import { getCurrentTradeStarportId, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
 import { useTradeHubState } from './features/trade/tradeState.js';
 import { createTradeListingTransaction, buyTradeListingTransaction, createTradeBuyOrderTransaction, cancelTradeListingTransaction } from './features/trade/tradeActions.js';
-import { buildFabricationRequestPayload, buildFabricationStateUpdate, executeFabricationTransaction, buildRefineryRequestPayload, buildRefineryStateUpdateFromResult } from './features/fabrication/fabricationActions.js';
-import { getRefineryErrorMessage } from './features/fabrication/fabricationHelpers.js';
+import { buildFabricationRequestPayload, buildFabricationStateUpdate, buildRefineryRequestPayload, buildRefineryStateUpdateFromResult } from './features/fabrication/fabricationActions.js';
+import { getFabricationErrorMessage, getFabricationSuccessMessage, getRefineryErrorMessage } from './features/fabrication/fabricationHelpers.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -10239,14 +10239,11 @@ showStarportUI: function (starportId) {
         }
 
         if (isCommanderFitting) {
-            setGameState(prev => applyInstallFittingState(prev, {
+            setGameState(prev => applyCommanderInstallFittingState(prev, {
                 item,
                 activeFittingSlot,
-                cloudUserId: cloudUser?.id,
                 systemToStarport: SYSTEM_TO_STARPORT,
-                hydrateFittedModule,
                 getLiveShipResources,
-                cloudService,
                 gameManager: gameManagerRef.current
             }));
 
@@ -10280,37 +10277,12 @@ showStarportUI: function (starportId) {
                 return;
             }
 
-            setGameState(prev => {
-                const nextInventory = Array.isArray(result.cargo) ? result.cargo.map(entry => hydrateItem(entry)) : prev.inventory;
-                const nextStorageItems = Array.isArray(result.storage) ? result.storage.map(entry => hydrateItem(entry)) : (prev.storage?.[starportId] || []);
-                const nextCargoWeight = nextInventory.reduce((sum, cargoItem) => sum + (parseFloat(cargoItem.weight) || 0), 0);
-                const nextOwnedShips = Array.isArray(result?.commanderState?.owned_ships)
-                    ? result.commanderState.owned_ships.map(ship => hydrateVessel(ship, ship))
-                    : prev.ownedShips;
-                const nextActiveShipStats = result?.active_ship_stats || null;
-                const nextCombatStats = nextActiveShipStats?.combat_stats || prev.combat_stats;
-                return {
-                    ...prev,
-                    inventory: nextInventory,
-                    storage: { ...(prev.storage || {}), [starportId]: nextStorageItems },
-                    ownedShips: nextOwnedShips,
-                    currentCargoWeight: nextCargoWeight,
-                    fittings: nextActiveShipStats?.fittings || prev.fittings,
-                    hp: Number.isFinite(nextActiveShipStats?.hp) ? nextActiveShipStats.hp : prev.hp,
-                    maxHp: Number.isFinite(nextActiveShipStats?.maxHp) ? nextActiveShipStats.maxHp : prev.maxHp,
-                    shields: Number.isFinite(nextActiveShipStats?.shields) ? nextActiveShipStats.shields : prev.shields,
-                    maxShields: Number.isFinite(nextActiveShipStats?.maxShields) ? nextActiveShipStats.maxShields : prev.maxShields,
-                    energy: Number.isFinite(nextActiveShipStats?.energy) ? nextActiveShipStats.energy : prev.energy,
-                    maxEnergy: Number.isFinite(nextActiveShipStats?.maxEnergy) ? nextActiveShipStats.maxEnergy : prev.maxEnergy,
-                    combat_stats: nextCombatStats,
-                    armor: Number.isFinite(nextCombatStats?.armor) ? nextCombatStats.armor : prev.armor,
-                    resistances: nextCombatStats?.resistances || prev.resistances,
-                    maxPowerGrid: Number.isFinite(nextCombatStats?.powergrid) ? nextCombatStats.powergrid : prev.maxPowerGrid,
-                    maxCpu: Number.isFinite(nextCombatStats?.cpu) ? nextCombatStats.cpu : prev.maxCpu,
-                    currentLiveShipId: result?.commanderState?.active_ship_id || prev.currentLiveShipId,
-                    shipId: result?.commanderState?.active_ship_id || prev.shipId
-                };
-            });
+            setGameState(prev => applyAuthoritativeFittingResult(prev, {
+                result,
+                starportId,
+                hydrateItem,
+                hydrateVessel
+            }));
 
             setActiveFittingSlot(null);
             showNotification(`${item.name} installed successfully.`, 'info');
@@ -10325,13 +10297,10 @@ showStarportUI: function (starportId) {
 
         const isCommanderFitting = activeFittingSlot.type === 'outfit' || activeFittingSlot.type === 'implant';
         if (isCommanderFitting) {
-            setGameState(prev => applyUnfitFittingState(prev, {
+            setGameState(prev => applyCommanderUnfitFittingState(prev, {
                 slotId,
                 activeFittingSlot,
-                cloudUserId: cloudUser?.id,
-                systemToStarport: SYSTEM_TO_STARPORT,
                 getLiveShipResources,
-                cloudService,
                 gameManager: gameManagerRef.current
             }));
 
@@ -10362,37 +10331,12 @@ showStarportUI: function (starportId) {
                 return;
             }
 
-            setGameState(prev => {
-                const nextInventory = Array.isArray(result.cargo) ? result.cargo.map(entry => hydrateItem(entry)) : prev.inventory;
-                const nextStorageItems = Array.isArray(result.storage) ? result.storage.map(entry => hydrateItem(entry)) : (prev.storage?.[starportId] || []);
-                const nextCargoWeight = nextInventory.reduce((sum, cargoItem) => sum + (parseFloat(cargoItem.weight) || 0), 0);
-                const nextOwnedShips = Array.isArray(result?.commanderState?.owned_ships)
-                    ? result.commanderState.owned_ships.map(ship => hydrateVessel(ship, ship))
-                    : prev.ownedShips;
-                const nextActiveShipStats = result?.active_ship_stats || null;
-                const nextCombatStats = nextActiveShipStats?.combat_stats || prev.combat_stats;
-                return {
-                    ...prev,
-                    inventory: nextInventory,
-                    storage: { ...(prev.storage || {}), [starportId]: nextStorageItems },
-                    ownedShips: nextOwnedShips,
-                    currentCargoWeight: nextCargoWeight,
-                    fittings: nextActiveShipStats?.fittings || prev.fittings,
-                    hp: Number.isFinite(nextActiveShipStats?.hp) ? nextActiveShipStats.hp : prev.hp,
-                    maxHp: Number.isFinite(nextActiveShipStats?.maxHp) ? nextActiveShipStats.maxHp : prev.maxHp,
-                    shields: Number.isFinite(nextActiveShipStats?.shields) ? nextActiveShipStats.shields : prev.shields,
-                    maxShields: Number.isFinite(nextActiveShipStats?.maxShields) ? nextActiveShipStats.maxShields : prev.maxShields,
-                    energy: Number.isFinite(nextActiveShipStats?.energy) ? nextActiveShipStats.energy : prev.energy,
-                    maxEnergy: Number.isFinite(nextActiveShipStats?.maxEnergy) ? nextActiveShipStats.maxEnergy : prev.maxEnergy,
-                    combat_stats: nextCombatStats,
-                    armor: Number.isFinite(nextCombatStats?.armor) ? nextCombatStats.armor : prev.armor,
-                    resistances: nextCombatStats?.resistances || prev.resistances,
-                    maxPowerGrid: Number.isFinite(nextCombatStats?.powergrid) ? nextCombatStats.powergrid : prev.maxPowerGrid,
-                    maxCpu: Number.isFinite(nextCombatStats?.cpu) ? nextCombatStats.cpu : prev.maxCpu,
-                    currentLiveShipId: result?.commanderState?.active_ship_id || prev.currentLiveShipId,
-                    shipId: result?.commanderState?.active_ship_id || prev.shipId
-                };
-            });
+            setGameState(prev => applyAuthoritativeFittingResult(prev, {
+                result,
+                starportId,
+                hydrateItem,
+                hydrateVessel
+            }));
 
             setActiveFittingSlot(null);
             showNotification('Module uninstalled to ship cargo.', 'info');
@@ -11312,20 +11256,37 @@ showStarportUI: function (starportId) {
         }
 
         try {
-            return await executeFabricationTransaction({
-                backendSocket,
-                buildRequestPayload: buildFabricationRequestPayload,
-                buildStateUpdate: buildFabricationStateUpdate,
+            const result = await backendSocket.requestFabricateBlueprint(buildFabricationRequestPayload({
                 starportId,
                 blueprintData,
                 blueprintItem,
-                ingredients,
-                avgQL,
-                setGameState,
+                ingredients
+            }));
+
+            if (!result) {
+                showNotification("FABRICATION FAILED: Backend timeout.", "error");
+                return { ok: false, error: 'timeout' };
+            }
+
+            if (!result.ok) {
+                showNotification(getFabricationErrorMessage(result.error), "error");
+                return result;
+            }
+
+            setGameState(prev => buildFabricationStateUpdate({
+                prev,
+                result,
+                starportId,
                 hydrateItem,
-                hydrateVessel,
-                showNotification
-            });
+                hydrateVessel
+            }).nextState);
+
+            if (result?.commanderState && typeof result.commanderState.credits === 'number') {
+                window.dispatchEvent(new CustomEvent('sectorfall:commander_state', { detail: result.commanderState }));
+            }
+
+            showNotification(getFabricationSuccessMessage(result, blueprintData, avgQL), 'success');
+            return result;
         } catch (err) {
             console.warn('[Fabricate][Client] backend fabricate failed', err);
             showNotification('FABRICATION FAILED: Backend rejected the request.', 'error');
