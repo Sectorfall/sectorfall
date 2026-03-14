@@ -149,6 +149,7 @@ export class BackendSocket {
     this._pendingRespawnRequests = new Map();
     this._pendingFabricationRequests = new Map();
     this._pendingRefineryRequests = new Map();
+    this._pendingCargoTransferRequests = new Map();
     this._pendingFittingRequests = new Map();
     this._pendingMarketRequests = new Map();
     this.arenaHooks = null;
@@ -529,6 +530,10 @@ export class BackendSocket {
 
       case "REFINERY_RESULT":
         this.handleRefineryResult(data);
+        break;
+
+      case "CARGO_TRANSFER_RESULT":
+        this.handleCargoTransferResult(data);
         break;
 
       case "COMMANDER_FITTING_RESULT":
@@ -2148,6 +2153,34 @@ if (fireSolution && typeof fireSolution === "object") {
     });
   }
 
+  requestCargoTransfer({ starportId, itemId, direction } = {}) {
+    const socketState = this.socket?.readyState;
+    const socketOpen = socketState === WebSocket.OPEN;
+    if (!this.socket || !socketOpen || !this.userId || !starportId || !itemId || !direction) {
+      return Promise.resolve(null);
+    }
+    const requestId = `cargo-transfer-${Date.now()}-${++this.seq}`;
+    return new Promise((resolve) => {
+      this._pendingCargoTransferRequests.set(requestId, { resolve, createdAt: Date.now(), itemId, direction, starportId });
+      this.socket.send(JSON.stringify({
+        type: 'CARGO_TRANSFER_REQUEST',
+        requestId,
+        userId: this.userId,
+        starport_id: starportId,
+        itemId,
+        direction,
+        clientTime: Date.now()
+      }));
+      setTimeout(() => {
+        const pending = this._pendingCargoTransferRequests.get(requestId);
+        if (pending) {
+          this._pendingCargoTransferRequests.delete(requestId);
+          pending.resolve(null);
+        }
+      }, 9000);
+    });
+  }
+
   requestCommanderFitting({ action, starportId, slotId, itemId = null, source = null } = {}) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !action || !starportId || !slotId) return Promise.resolve(null);
     const requestId = `fit-${Date.now()}-${++this.seq}`;
@@ -2420,6 +2453,22 @@ handleMarketActionResult(data) {
         }
       }
       window.dispatchEvent(new CustomEvent('sectorfall:refinery_result', { detail: data }));
+    } catch {
+      // ignore
+    }
+  }
+
+  handleCargoTransferResult(data) {
+    try {
+      const requestId = data?.requestId || null;
+      if (requestId) {
+        const pending = this._pendingCargoTransferRequests.get(requestId);
+        if (pending) {
+          this._pendingCargoTransferRequests.delete(requestId);
+          pending.resolve(data);
+        }
+      }
+      window.dispatchEvent(new CustomEvent('sectorfall:cargo_transfer_result', { detail: data }));
     } catch {
       // ignore
     }

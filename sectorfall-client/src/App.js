@@ -30,8 +30,7 @@ import { getModuleResourceUsage, getLiveShipResources, getSlotClass, getItemSlot
 import { applyInstallFittingState, applyUnfitFittingState } from './features/fitting/fittingActions.js';
 import { useFittingState, buildFittingSelectMenuProps } from './features/fitting/fittingState.js';
 import { getFormattedFittingTitle, getFittingHardwareTitle, evaluateFittingCandidate, buildInstallFittingWarning } from './features/fitting/fittingPreview.js';
-import { canItemsStackForTransfer, mergeTransferredItemIntoList, removeSingleTransferredItemFromList, calculateCargoTotals } from './features/inventory/inventoryHelpers.js';
-import { buildTransferToStationState, buildTransferToShipState, buildDockedCargoCloudPayload } from './features/inventory/inventoryActions.js';
+import { buildCargoTransferRequestPayload, applyCargoTransferResult, syncDockedCargoToGameManager, getCargoTransferDirection, getCargoTransferErrorMessage } from './features/inventory/transferActions.js';
 import { useCargoMenuState } from './features/inventory/inventoryState.js';
 import { getCurrentTradeStarportId, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
 import { useTradeHubState } from './features/trade/tradeState.js';
@@ -11514,7 +11513,7 @@ backendSocket.sendUndock(
 
         const currentSystemId = gameState.currentSystem?.id;
         const starportId = SYSTEM_TO_STARPORT[currentSystemId];
-        
+
         if (!starportId) {
             showNotification("TRANSFER FAILED: NO AUTHORITATIVE STARPORT ID", "error");
             return;
@@ -11541,34 +11540,26 @@ backendSocket.sendUndock(
             return;
         }
 
+        const requestPayload = buildCargoTransferRequestPayload({
+            item,
+            starportId,
+            direction: getCargoTransferDirection('toStorage')
+        });
+        const result = await backendSocket.requestCargoTransfer(requestPayload);
+        if (!result?.ok) {
+            showNotification(getCargoTransferErrorMessage(result, 'TRANSFER FAILED: BACKEND TIMEOUT'), "error");
+            return;
+        }
+
         setGameState(prev => {
             const {
                 nextInventory,
-                nextStationStorage,
                 nextShipWeight,
                 nextShipVolume,
                 nextState
-            } = buildTransferToStationState(prev, item, starportId);
+            } = applyCargoTransferResult(prev, result, starportId);
 
-            // Notify Engine
-            if (gameManagerRef.current) {
-                gameManagerRef.current.stats.currentCargoWeight = nextShipWeight;
-                gameManagerRef.current.stats.currentCargoVolume = nextShipVolume;
-                gameManagerRef.current.inventory = nextInventory;
-            }
-
-            // Push to Cloud
-            cloudService.saveInventoryState(cloudUser.id, starportId, nextStationStorage, "transferToStation");
-            cloudService.saveToCloud(
-                cloudUser.id,
-                starportId,
-                buildDockedCargoCloudPayload(prev, {
-                    nextInventory,
-                    currentSystemId,
-                    telemetry: gameManagerRef.current?.getTelemetry() || {}
-                })
-            );
-
+            syncDockedCargoToGameManager(gameManagerRef, nextInventory, nextShipWeight, nextShipVolume);
             return nextState;
         });
 
@@ -11614,34 +11605,26 @@ backendSocket.sendUndock(
             return;
         }
 
+        const requestPayload = buildCargoTransferRequestPayload({
+            item,
+            starportId,
+            direction: getCargoTransferDirection('toShip')
+        });
+        const result = await backendSocket.requestCargoTransfer(requestPayload);
+        if (!result?.ok) {
+            showNotification(getCargoTransferErrorMessage(result, 'TRANSFER FAILED: BACKEND TIMEOUT'), "error");
+            return;
+        }
+
         setGameState(prev => {
             const {
                 nextInventory,
-                nextStationStorage,
                 nextShipWeight,
                 nextShipVolume,
                 nextState
-            } = buildTransferToShipState(prev, item, starportId);
+            } = applyCargoTransferResult(prev, result, starportId);
 
-            // Notify Engine
-            if (gameManagerRef.current) {
-                gameManagerRef.current.stats.currentCargoWeight = nextShipWeight;
-                gameManagerRef.current.stats.currentCargoVolume = nextShipVolume;
-                gameManagerRef.current.inventory = nextInventory;
-            }
-
-            // Push to Cloud
-            cloudService.saveInventoryState(cloudUser.id, starportId, nextStationStorage, "transferToShip");
-            cloudService.saveToCloud(
-                cloudUser.id,
-                starportId,
-                buildDockedCargoCloudPayload(prev, {
-                    nextInventory,
-                    currentSystemId,
-                    telemetry: gameManagerRef.current?.getTelemetry() || {}
-                })
-            );
-
+            syncDockedCargoToGameManager(gameManagerRef, nextInventory, nextShipWeight, nextShipVolume);
             return nextState;
         });
 
