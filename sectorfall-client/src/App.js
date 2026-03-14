@@ -3607,6 +3607,7 @@ const RefineryMenu = ({ gameState, onRefine }) => {
     const stationCargo = currentStarportId ? (gameState.storage[currentStarportId] || []).filter(i => i.type === 'resource' && !i.isRefined) : [];
 
     const handleRefineClick = (item, source, filteredIndex) => {
+        console.log('[REFINERY DEBUG] clicked refinery list item', item);
         console.log('[REFINERY UI] button clicked', {
             itemId: item?.id || null,
             itemName: item?.name || null,
@@ -11707,6 +11708,8 @@ backendSocket.sendUndock(
 
     const handleRefine = async (item, source, filteredIndex = -1) => {
         const starportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
+        console.log('[REFINERY DEBUG] refinery item object', item);
+        console.log('[REFINERY DEBUG] station storage snapshot', (gameState.storage?.[starportId] || []).filter(i => i.type === 'resource' && !i.isRefined));
         console.log('[REFINERY UI] refine handler entered', {
             currentSystemId: gameState.currentSystem?.id || null,
             starportId: starportId || null,
