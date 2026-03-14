@@ -5490,6 +5490,14 @@ async function handleRefineOre(socket, data) {
   const requestId = data?.requestId || null;
   if (!player || !userId || player.userId !== userId) return;
 
+  console.log('[REFINERY] request received', {
+    userId,
+    requestId,
+    starportId: data?.starport_id || null,
+    itemId: data?.itemId || data?.item_id || null,
+    source: data?.source || null
+  });
+
   try {
     const dockedStarport = await getDockedMarketStarport(player, userId);
     const requestedStarport = normalizeStarportId(data?.starport_id);
@@ -5573,6 +5581,15 @@ async function handleRefineOre(socket, data) {
       return;
     }
 
+    console.log('[REFINERY] success', {
+      userId,
+      requestId,
+      starportId: dockedStarport,
+      source,
+      sourceItemId: itemId,
+      oreType,
+      refinedAmount
+    });
     sendRefineryResult(socket, {
       requestId,
       ok: true,
@@ -5588,7 +5605,11 @@ async function handleRefineOre(socket, data) {
       storage
     });
   } catch (e) {
-    console.warn('[Refinery] failed:', e?.message || e);
+    console.warn('[REFINERY] failure', {
+      userId,
+      requestId: data?.requestId || null,
+      error: e?.message || e
+    });
     sendRefineryResult(socket, { requestId: data?.requestId || null, ok: false, error: e?.message || 'refinery_failed' });
   }
 }
