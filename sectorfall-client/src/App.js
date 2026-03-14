@@ -10294,7 +10294,8 @@ showStarportUI: function (starportId) {
                         result,
                         starportId,
                         hydrateItem,
-                        hydrateVessel
+                        hydrateVessel,
+                        gameManager: gameManagerRef.current
                     });
 
                     console.log('[FITTING][INSTALL][CLIENT_APPLY]', {
@@ -10345,11 +10346,8 @@ showStarportUI: function (starportId) {
         }
 
         try {
-            console.log('[FITTING][INSTALL][REQUEST]', {
-                slotId: activeFittingSlot?.id,
-                itemId: item?.id,
-                itemName: item?.name,
-                source: item?.location === 'storage' ? 'storage' : 'ship',
+            console.log('[FITTING][UNFIT][REQUEST]', {
+                slotId,
                 starportId,
                 shipId: gameState?.shipId,
                 maxShields: gameState?.maxShields,
@@ -10391,7 +10389,8 @@ showStarportUI: function (starportId) {
                         result,
                         starportId,
                         hydrateItem,
-                        hydrateVessel
+                        hydrateVessel,
+                        gameManager: gameManagerRef.current
                     });
 
                     console.log('[FITTING][UNFIT][CLIENT_APPLY]', {

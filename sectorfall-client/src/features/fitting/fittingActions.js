@@ -97,7 +97,8 @@ export function applyAuthoritativeFittingResult(prev, context) {
         result,
         starportId,
         hydrateItem,
-        hydrateVessel
+        hydrateVessel,
+        gameManager
     } = context;
 
     console.log('[FITTING][AUTHORITATIVE_APPLY]', {
@@ -186,6 +187,92 @@ export function applyAuthoritativeFittingResult(prev, context) {
         currentLiveShipId: nextCombatStats?.shipId || prev.currentLiveShipId,
         shipId: nextCombatStats?.shipId || prev.shipId
     };
+
+    if (gameManager) {
+        try {
+            if (typeof gameManager.syncFittings === 'function') {
+                gameManager.syncFittings(normalizedFittings);
+            } else {
+                gameManager.fittings = normalizedFittings;
+            }
+
+            if (gameManager.stats) {
+                gameManager.stats.hp = nextState.hp;
+                gameManager.stats.maxHp = nextState.maxHp;
+                gameManager.stats.shields = nextState.shields;
+                gameManager.stats.maxShields = nextState.maxShields;
+                gameManager.stats.energy = nextState.energy;
+                gameManager.stats.maxEnergy = nextState.maxEnergy;
+                if (typeof nextState.armor === 'number') gameManager.stats.armor = nextState.armor;
+                if (nextState.resistances && typeof nextState.resistances === 'object') {
+                    gameManager.stats.resistances = { ...nextState.resistances };
+                    gameManager.stats.kineticRes = Number(nextState.resistances.kinetic || 0);
+                    gameManager.stats.thermalRes = Number(nextState.resistances.thermal || 0);
+                    gameManager.stats.blastRes = Number(nextState.resistances.blast || 0);
+                }
+                if (nextCombatStats && typeof nextCombatStats === 'object') {
+                    gameManager.stats.combatStats = nextCombatStats;
+                }
+            }
+
+            if (gameManager.ship) {
+                gameManager.ship.fittings = normalizedFittings;
+                gameManager.ship.hp = nextState.hp;
+                gameManager.ship.maxHp = nextState.maxHp;
+                gameManager.ship.shields = nextState.shields;
+                gameManager.ship.maxShields = nextState.maxShields;
+                gameManager.ship.energy = nextState.energy;
+                gameManager.ship.maxEnergy = nextState.maxEnergy;
+                if (typeof nextState.armor === 'number') gameManager.ship.armor = nextState.armor;
+                if (nextState.resistances && typeof nextState.resistances === 'object') {
+                    gameManager.ship.resistances = { ...nextState.resistances };
+                    gameManager.ship.kineticRes = Number(nextState.resistances.kinetic || 0);
+                    gameManager.ship.thermalRes = Number(nextState.resistances.thermal || 0);
+                    gameManager.ship.blastRes = Number(nextState.resistances.blast || 0);
+                }
+                if (nextCombatStats && typeof nextCombatStats === 'object') {
+                    gameManager.ship.combatStats = nextCombatStats;
+                }
+                if (nextState.shipId) {
+                    gameManager.ship.type = nextState.shipId;
+                }
+            }
+
+            gameManager.gameState = {
+                ...(gameManager.gameState || {}),
+                fittings: normalizedFittings,
+                hp: nextState.hp,
+                maxHp: nextState.maxHp,
+                shields: nextState.shields,
+                maxShields: nextState.maxShields,
+                energy: nextState.energy,
+                maxEnergy: nextState.maxEnergy,
+                combat_stats: nextCombatStats,
+                combatStats: nextCombatStats
+            };
+
+            if (typeof gameManager.updateStateToReact === 'function') {
+                gameManager.updateStateToReact();
+            } else if (typeof gameManager.updateUi === 'function') {
+                gameManager.lastUiUpdate = 0;
+                gameManager.updateUi();
+            }
+
+            console.log('[FITTING][ENGINE_SYNC_AFTER_APPLY]', {
+                shipType: gameManager?.ship?.type,
+                maxShields: gameManager?.stats?.maxShields,
+                shields: gameManager?.stats?.shields,
+                fittings: gameManager?.fittings
+            });
+        } catch (engineSyncError) {
+            console.error('[FITTING][ENGINE_SYNC_AFTER_APPLY_ERROR]', engineSyncError, {
+                shipId: nextState?.shipId,
+                maxShields: nextState?.maxShields,
+                shields: nextState?.shields,
+                fittings: nextState?.fittings
+            });
+        }
+    }
 
     console.log('[FITTING][AUTHORITATIVE_STATS_AFTER_APPLY]', {
         shipId: nextState?.shipId,
