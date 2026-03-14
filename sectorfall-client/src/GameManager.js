@@ -3982,6 +3982,13 @@ async spawnLoot(itemData, position) {
                 this.nameSprite.visible = true;
             }
         } catch (e) {}
+        const authoritativeCombatStats = (shipObject?.combatStats && typeof shipObject.combatStats === 'object')
+            ? shipObject.combatStats
+            : ((shipObject?.combat_stats && typeof shipObject.combat_stats === 'object') ? shipObject.combat_stats : null);
+        const authoritativeResistances = (authoritativeCombatStats?.resistances && typeof authoritativeCombatStats.resistances === 'object')
+            ? authoritativeCombatStats.resistances
+            : ((shipObject?.resistances && typeof shipObject.resistances === 'object') ? shipObject.resistances : {});
+
         // Update core stats in engine
         this.baseShipConfig = {
             baseSigRadius: config.baseSigRadius,
@@ -3989,24 +3996,50 @@ async spawnLoot(itemData, position) {
             baseCPU: config.baseCPU,
             targetingStrength: config.targetingStrength ?? config.lockMultiplier ?? 1,
             scanSpeed: config.scanSpeed ?? 1,
-            recommendedWeaponSizes: config.recommendedWeaponSizes
+            recommendedWeaponSizes: config.recommendedWeaponSizes,
+            authoritativeBaseHp: Number.isFinite(authoritativeCombatStats?.maxHp)
+                ? authoritativeCombatStats.maxHp
+                : (Number.isFinite(shipObject?.maxHp) ? shipObject.maxHp : config.hp),
+            authoritativeBaseArmor: Number.isFinite(authoritativeCombatStats?.armor)
+                ? authoritativeCombatStats.armor
+                : (Number.isFinite(shipObject?.armor) ? shipObject.armor : 0),
+            authoritativeResistances: {
+                kinetic: Number(authoritativeResistances?.kinetic || 0),
+                thermal: Number(authoritativeResistances?.thermal || 0),
+                blast: Number(authoritativeResistances?.blast || 0)
+            }
         };
 
         this.stats = {
             ...this.stats,
             name: shipType,
-            maxHp: Number.isFinite(this.stats?.maxHp) ? this.stats.maxHp : config.hp,
-            hp: shipObject.hp ?? this.stats.hp ?? config.hp,
-            armor: Number.isFinite(this.stats?.armor) ? this.stats.armor : (shipObject.armor ?? config.armor),
-            kineticRes: Number.isFinite(this.stats?.kineticRes) ? this.stats.kineticRes : (shipObject.kineticRes ?? config.kineticRes),
-            thermalRes: Number.isFinite(this.stats?.thermalRes) ? this.stats.thermalRes : (shipObject.thermalRes ?? config.thermalRes),
-            blastRes: Number.isFinite(this.stats?.blastRes) ? this.stats.blastRes : (shipObject.blastRes ?? config.blastRes),
-            maxEnergy: Number.isFinite(this.stats?.maxEnergy) ? this.stats.maxEnergy : config.baseEnergy,
-            energy: shipObject.energy ?? this.stats.energy ?? config.baseEnergy,
+            maxHp: Number.isFinite(authoritativeCombatStats?.maxHp)
+                ? authoritativeCombatStats.maxHp
+                : (Number.isFinite(shipObject?.maxHp) ? shipObject.maxHp : (Number.isFinite(this.stats?.maxHp) ? this.stats.maxHp : config.hp)),
+            hp: Number.isFinite(shipObject?.hp) ? shipObject.hp : (Number.isFinite(this.stats?.hp) ? this.stats.hp : config.hp),
+            armor: Number.isFinite(authoritativeCombatStats?.armor)
+                ? authoritativeCombatStats.armor
+                : (Number.isFinite(shipObject?.armor) ? shipObject.armor : 0),
+            kineticRes: Number(authoritativeResistances?.kinetic || 0),
+            thermalRes: Number(authoritativeResistances?.thermal || 0),
+            blastRes: Number(authoritativeResistances?.blast || 0),
+            resistances: {
+                kinetic: Number(authoritativeResistances?.kinetic || 0),
+                thermal: Number(authoritativeResistances?.thermal || 0),
+                blast: Number(authoritativeResistances?.blast || 0)
+            },
+            maxEnergy: Number.isFinite(authoritativeCombatStats?.maxEnergy)
+                ? authoritativeCombatStats.maxEnergy
+                : (Number.isFinite(shipObject?.maxEnergy) ? shipObject.maxEnergy : (Number.isFinite(this.stats?.maxEnergy) ? this.stats.maxEnergy : config.baseEnergy)),
+            energy: Number.isFinite(shipObject?.energy) ? shipObject.energy : (Number.isFinite(this.stats?.energy) ? this.stats.energy : config.baseEnergy),
+            maxShields: Number.isFinite(authoritativeCombatStats?.maxShields)
+                ? authoritativeCombatStats.maxShields
+                : (Number.isFinite(shipObject?.maxShields) ? shipObject.maxShields : (Number.isFinite(this.stats?.maxShields) ? this.stats.maxShields : 0)),
+            shields: Number.isFinite(shipObject?.shields) ? shipObject.shields : (Number.isFinite(this.stats?.shields) ? this.stats.shields : 0),
             jumpPower: shipObject.jumpPower !== undefined ? shipObject.jumpPower : (config.jumpPower !== undefined ? config.jumpPower : 1),
             jumpWarmupTime: config.jumpWarmupTime || 7000,
-            reactorRecovery: shipObject.reactorRecovery || config.baseEnergyRecharge || 1.0,
-            energyRegen: shipObject.reactorRecovery || config.baseEnergyRecharge || 1.0,
+            reactorRecovery: Number.isFinite(shipObject?.reactorRecovery) ? shipObject.reactorRecovery : (config.baseEnergyRecharge || 1.0),
+            energyRegen: Number.isFinite(shipObject?.reactorRecovery) ? shipObject.reactorRecovery : (config.baseEnergyRecharge || 1.0),
             cargoHold: config.cargoHold || config.cargoHold,
             scanRange: config.scanRange,
             lockOnRange: config.lockOnRange,
@@ -4016,7 +4049,8 @@ async spawnLoot(itemData, position) {
             maxSpeed: shipObject.maxSpeed || config.maxSpeed || 3.5,
             turnSpeed: shipObject.turnSpeed || config.turnSpeed || 0.045,
             brakingForce: config.brakingForce || 1.5,
-            thrustImpulse: config.thrustImpulse || 3.0
+            thrustImpulse: config.thrustImpulse || 3.0,
+            combatStats: authoritativeCombatStats || this.stats?.combatStats
         };
 
         this.ship.baseMaxSpeed = shipObject.maxSpeed || config.maxSpeed || 3.5;
