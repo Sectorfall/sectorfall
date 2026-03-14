@@ -231,7 +231,6 @@ export const transferShipFromHangar = async ({
         hangarShips: prev.hangarShips.filter(s => s.id !== item.id),
         ownedShips: [...prev.ownedShips, hydratedShip]
       };
-      // owned_ships manifest persistence removed; hangar_states is authoritative
 
       return newState;
     });

@@ -86,9 +86,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
     const nextInventory = Array.isArray(result?.cargo) ? result.cargo.map(entry => hydrateItem(entry)) : prev.inventory;
     const nextStorageItems = Array.isArray(result?.storage) ? result.storage.map(entry => hydrateItem(entry)) : (prev.storage?.[starportId] || []);
     const nextCargoWeight = nextInventory.reduce((sum, cargoItem) => sum + (parseFloat(cargoItem.weight) || 0), 0);
-    const nextOwnedShipsBase = Array.isArray(result?.commanderState?.owned_ships)
-        ? result.commanderState.owned_ships.map(ship => hydrateVessel(ship, ship))
-        : prev.ownedShips;
+    const nextOwnedShipsBase = prev.ownedShips;
     const nextActiveShipStats = result?.active_ship_stats || null;
     const nextCombatStats = nextActiveShipStats?.combat_stats || nextActiveShipStats?.combatStats || prev.combat_stats || prev.combatStats;
 

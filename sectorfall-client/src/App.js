@@ -8750,17 +8750,12 @@ useEffect(() => {
         const hasExplicitActiveShipField = Object.prototype.hasOwnProperty.call(detail, 'active_ship_id');
         const nextActiveShipId = isPersistableShipId(detail.active_ship_id) ? detail.active_ship_id : null;
         const clearActiveShip = hasExplicitActiveShipField && !nextActiveShipId && !activeShipStats;
-        const authoritativeOwnedShips = Array.isArray(detail.owned_ships)
-            ? detail.owned_ships.map((ship) => hydrateVessel(ship, ship))
-            : null;
-
         setGameState(prev => ({
             ...prev,
             credits: typeof detail.credits === 'number' ? detail.credits : prev.credits,
             experience: typeof detail.experience === 'number' ? detail.experience : prev.experience,
             level: typeof detail.level === 'number' ? detail.level : prev.level,
             commanderName: nextCommanderName || prev.commanderName,
-            ownedShips: authoritativeOwnedShips || prev.ownedShips,
             activeShipId: hasExplicitActiveShipField ? nextActiveShipId : prev.activeShipId,
             hp: clearActiveShip ? 0 : (typeof activeShipStats?.hp === 'number' ? activeShipStats.hp : prev.hp),
             maxHp: clearActiveShip ? 0 : (typeof activeShipStats?.maxHp === 'number' ? activeShipStats.maxHp : (typeof activeShipCombatStats?.maxHp === 'number' ? activeShipCombatStats.maxHp : prev.maxHp)),
@@ -8940,7 +8935,6 @@ useEffect(() => {
             const commanderResult = await cloudService.updateCommanderData(playerId, {
                 commander_name: user.name,
                 active_ship_id: null,
-                owned_ships: [],
                 fleet: [],
                 last_station_id: defaultStarport,
                 credits: 1000,
@@ -9240,57 +9234,48 @@ if (gameManagerRef.current) {
                 currentSystem: systemInfo,
                 commanderName: commanderData?.commander_name || profile.commander_name || user.name,
                 globalMarkets: seedNPCMarketListings(savedState.globalMarkets || {}),
-                ownedShips: [] // authoritative fleet manifest now comes from hangar state / commander websocket sync
+                ownedShips: []
             };
 
-            // Link the manifested ship to the active game state
-            let activeShip;
-            if (!newState.ownedShips || newState.ownedShips.length === 0) {
-                // ✅ If the player already has ships stored in hangar (common for brand-new profiles after starter kit),
-                // use the first stored ship as the active fleet entry to avoid "double ship" manifests.
-                if (Array.isArray(newState.hangarShips) && newState.hangarShips.length > 0) {
-                    const desiredActiveShipId = commanderData.active_ship_id || null;
-                    const primary = newState.hangarShips.find(s => s?.id === desiredActiveShipId) || newState.hangarShips[0];
-                    // Hydrate the primary hangar ship with telemetry so the active craft reflects ship_states_v2.
-                    activeShip = hydrateVessel(primary, primary, telemetry);
-                    // Mirror hangar ships into ownedShips for the fleet manifest.
-                    newState.ownedShips = newState.hangarShips.map(s => (s.id === primary.id ? activeShip : hydrateVessel(s, s)));
-                    newState.activeShipId = primary.id;
-                } else {
-                    const newShipId = uuid();
-                    const displayName = getShipDisplayName(shipType || 'OMNI SCOUT');
-                    const registryEntry = { id: newShipId, type: shipType || 'OMNI SCOUT', name: String(displayName || (shipType || 'OMNI SCOUT')).toUpperCase() };
-                    // Hydrate using telemetry as the final state
-                    activeShip = hydrateVessel(registryEntry, null, telemetry);
-                    newState.ownedShips = [activeShip];
-                    newState.activeShipId = newShipId;
-                }
-            } else {
-                // Fleet exists in cloud. Resolve the active ship from commander_data and sync with ship_states telemetry.
-                const cloudActiveShipId = commanderData.active_ship_id || newState.ownedShips[0].id;
-                let foundShip = newState.ownedShips.find(s => s.id === cloudActiveShipId);
-                
-                // Fallback: if ship ID from commander_data not found in owned_ships, fallback to type match
-                if (!foundShip) {
-                    const cloudShipType = shipType || (telemetry?.shipType);
-                    foundShip = newState.ownedShips.find(s => s.type === cloudShipType);
-                }
-                
-                // Final fallback: first ship in fleet
-                if (!foundShip) foundShip = newState.ownedShips[0];
+            const canonicalLoadedShipType = resolveShipId(shipType || telemetry?.shipType || cloudRecord?.ship_type || cloudRecord?.shipId || 'ship_omni_scout') || 'ship_omni_scout';
+            const activeShipInstanceId = commanderData.active_ship_id || cloudRecord?.id || null;
 
-                newState.activeShipId = foundShip.id;
-                
-                // Hydrate the fleet manifest with authoritative stats and slot map integrity
-                newState.ownedShips = newState.ownedShips.map(s => {
-                    // For the active ship, we merge telemetry. For others, we just hydrate from registry + fleet entry.
-                    if (s.id === foundShip.id) {
-                        return hydrateVessel(s, s, telemetry);
-                    }
-                    return hydrateVessel(s, s);
-                });
-                
-                activeShip = newState.ownedShips.find(s => s.id === foundShip.id);
+            // Build runtime fleet only from authoritative live ship state + hangar records.
+            let activeShip = null;
+            if (activeShipInstanceId) {
+                const activeShipSeed = {
+                    id: activeShipInstanceId,
+                    type: canonicalLoadedShipType,
+                    name: getShipDisplayName(canonicalLoadedShipType)
+                };
+                activeShip = hydrateVessel(activeShipSeed, activeShipSeed, telemetry || cloudRecord || null);
+                newState.activeShipId = activeShipInstanceId;
+            }
+
+            const runtimeHangarShips = Array.isArray(newState.hangarShips) ? newState.hangarShips.map(s => hydrateVessel(s, s)) : [];
+            const runtimeFleet = [];
+            if (activeShip) runtimeFleet.push(activeShip);
+            runtimeHangarShips.forEach((ship) => {
+                if (!ship || ship.id === activeShip?.id) return;
+                runtimeFleet.push(ship);
+            });
+
+            if (runtimeFleet.length === 0) {
+                const newShipId = uuid();
+                const displayName = getShipDisplayName(canonicalLoadedShipType || 'OMNI SCOUT');
+                const registryEntry = { id: newShipId, type: canonicalLoadedShipType || 'ship_omni_scout', name: String(displayName || 'OMNI SCOUT').toUpperCase() };
+                activeShip = hydrateVessel(registryEntry, null, telemetry || cloudRecord || null);
+                newState.ownedShips = [activeShip];
+                newState.activeShipId = newShipId;
+            } else {
+                newState.ownedShips = runtimeFleet;
+                if (!newState.activeShipId) {
+                    newState.activeShipId = runtimeFleet[0].id;
+                    activeShip = runtimeFleet[0];
+                } else {
+                    activeShip = runtimeFleet.find(s => s.id === newState.activeShipId) || runtimeFleet[0];
+                    newState.activeShipId = activeShip.id;
+                }
             }
 
             // --- AUTHORITATIVE STAT SYNC ---
@@ -10497,17 +10482,11 @@ showStarportUI: function (starportId) {
             
             await cloudService.saveToHangar(cloudUser.id, starportId, ship.id, shipToSave);
             
-            setGameState(prev => {
-                const newState = {
-                    ...prev,
-                    ownedShips: prev.ownedShips.filter(s => s.id !== ship.id),
-                    hangarShips: [...(prev.hangarShips || []), shipToSave]
-                };
-                
-                // owned_ships manifest persistence removed; hangar_states is authoritative
-
-                return newState;
-            });
+            setGameState(prev => ({
+                ...prev,
+                ownedShips: prev.ownedShips.filter(s => s.id !== ship.id),
+                hangarShips: [...(prev.hangarShips || []), shipToSave]
+            }));
             
             const prettyPort = String(starportId).replace(/_/g,' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
             showNotification(`${ship.name} secured in hangar at ${prettyPort}.`, "success");
@@ -11531,8 +11510,6 @@ backendSocket.sendUndock(
                         hangarShips: prev.hangarShips.filter(s => s.id !== item.id),
                         ownedShips: [...prev.ownedShips, hydratedShip]
                     };
-                    
-                    // owned_ships manifest persistence removed; hangar_states is authoritative
                     
                     return newState;
                 });

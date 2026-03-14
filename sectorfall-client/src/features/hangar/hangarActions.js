@@ -69,16 +69,11 @@ export const createHangarActionHandlers = ({
 
             await cloudService.saveToHangar(cloudUser.id, starportId, ship.id, shipToSave);
 
-            setGameState(prev => {
-                const newState = {
-                    ...prev,
-                    ownedShips: prev.ownedShips.filter(s => s.id !== ship.id),
-                    hangarShips: [...(prev.hangarShips || []), shipToSave]
-                };
-      // owned_ships manifest persistence removed; hangar_states is authoritative
-
-                return newState;
-            });
+            setGameState(prev => ({
+                ...prev,
+                ownedShips: prev.ownedShips.filter(s => s.id !== ship.id),
+                hangarShips: [...(prev.hangarShips || []), shipToSave]
+            }));
 
             const prettyPort = String(starportId)
                 .replace(/_/g, ' ')
