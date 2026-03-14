@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { 
     DRONE_MODULE_CONFIGS, DRONE_STATS, MINING_LASER_CONFIGS, MINING_RARITY_MODS,
     PULSE_CANNON_CONFIGS, PULSE_RARITY_MODS, FLUX_LASER_CONFIGS, FLUX_RARITY_MODS,
-    MISSILE_CONFIGS, MISSILE_RARITY_MODS, hydrateItem, getModColor
+    MISSILE_CONFIGS, MISSILE_RARITY_MODS, hydrateItem, getModColor, getShieldModuleStats
 } from '../GameManager.js';
 import { SHIP_REGISTRY } from '../shipRegistry.js';
 
@@ -205,44 +205,43 @@ export const aggregateShipStats = (ship, fittings) => {
     const authoritativeRes = (ship.resistances && typeof ship.resistances === 'object')
         ? ship.resistances
         : ((combatStats.resistances && typeof combatStats.resistances === 'object') ? combatStats.resistances : {});
-    const maxHullHp = getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.maxHp === 'number' ? ship.maxHp : 0);
-    const currentHullHp = typeof ship.hp === 'number'
-        ? ship.hp
-        : getAuthoritativeNumber(combatStats, ['hp', 'currentHp'], maxHullHp);
-    const finalHullHp = maxHullHp * (1 + hpBonus);
-    const displayedHullHp = Math.min(finalHullHp, currentHullHp * (1 + hpBonus));
-    const shieldCapacity = getAuthoritativeNumber(combatStats, ['maxShields', 'shieldCapacity'], typeof ship.maxShields === 'number' ? ship.maxShields : (typeof ship.shields === 'number' ? ship.shields : 0));
-    const currentShields = typeof ship.shields === 'number'
-        ? ship.shields
-        : getAuthoritativeNumber(combatStats, ['shields', 'currentShields'], 0);
+    const baseShipHP = typeof ship.maxHp === 'number'
+        ? ship.maxHp
+        : getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.hp === 'number' ? ship.hp : 0);
+    const finalHP = baseShipHP * (1 + hpBonus);
+    const shieldCapacity = typeof ship.maxShields === 'number'
+        ? ship.maxShields
+        : getAuthoritativeNumber(combatStats, ['maxShields', 'shieldCapacity'], typeof ship.shields === 'number' ? ship.shields : 0);
     const finalKinRes = (typeof ship.kineticRes === 'number' ? ship.kineticRes : Number(authoritativeRes.kinetic ?? 0)) + kinResBonus;
     const finalThermRes = (typeof ship.thermalRes === 'number' ? ship.thermalRes : Number(authoritativeRes.thermal ?? 0)) + thermResBonus;
     const finalBlastRes = (typeof ship.blastRes === 'number' ? ship.blastRes : Number(authoritativeRes.blast ?? 0)) + blastResBonus;
 
     const avgRes = (finalKinRes + finalThermRes + finalBlastRes) / 3;
-    const currentEhp = (displayedHullHp + currentShields) / Math.max(0.01, 1 - avgRes);
+    const ehp = (finalHP + shieldCapacity) / Math.max(0.01, 1 - avgRes);
 
     // Shield restoration stats (aggregated from fittings)
-    const shieldModuleStats = Object.values(shipFittings).reduce((acc, module) => {
-        if (!module || String(module.type || '').toLowerCase() !== 'shield') return acc;
-        const effectiveModule = module.final_stats ? module : hydrateItem(module);
-        const stats = getShieldModuleStats(effectiveModule || module) || {};
-        acc.regen += Number(stats.regen ?? effectiveModule?.final_stats?.regen ?? effectiveModule?.final_stats?.shieldRegen ?? 0);
-        const delayCandidate = Number(module.rechargeDelay ?? module.recharge_delay ?? effectiveModule?.final_stats?.rechargeDelay ?? effectiveModule?.final_stats?.recharge_delay ?? 5);
-        if (Number.isFinite(delayCandidate)) acc.delay = Math.min(acc.delay, delayCandidate);
-        return acc;
-    }, { regen: 0, delay: 5 });
+    const shieldModules = Object.values(shipFittings).filter((m) => (m?.type || '').toLowerCase() === 'shield');
+    const baseShieldRegen = shieldModules.reduce((sum, m) => {
+        const stats = getShieldModuleStats(m) || {};
+        const regen = Number(stats.regen ?? m?.rechargeRate ?? m?.regen ?? 0);
+        return sum + (Number.isFinite(regen) ? regen : 0);
+    }, 0);
+    const baseShieldDelay = shieldModules.reduce((delay, m) => {
+        const stats = getShieldModuleStats(m) || {};
+        const candidate = Number(stats.rechargeDelay ?? m?.rechargeDelay ?? 5);
+        return Number.isFinite(candidate) ? candidate : delay;
+    }, 5);
 
-    const finalShieldRegen = shieldModuleStats.regen * (1 + shieldRegenBonus);
-    const finalShieldDelay = Math.max(0.5, shieldModuleStats.delay * (2 - (1 + shieldDelayBonus))); 
+    const finalShieldRegen = baseShieldRegen * (1 + shieldRegenBonus);
+    const finalShieldDelay = Math.max(0.5, baseShieldDelay * (2 - (1 + shieldDelayBonus))); 
 
     return {
         shipConfig,
         hull: {
-            current: displayedHullHp,
-            max: finalHullHp,
+            current: finalHP,
+            max: getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.maxHp === 'number' ? ship.maxHp : 0) * (1 + hpBonus),
             armor: ((typeof ship.armor === 'number' ? ship.armor : getAuthoritativeNumber(combatStats, ['armor'], 0)) * 100),
-            ehp: currentEhp
+            ehp
         },
         resists: {
             kinetic: finalKinRes,
