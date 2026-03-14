@@ -6,7 +6,16 @@ function snapshotFittingDebugState(state) {
         combat_stats: state?.combat_stats || state?.combatStats || null,
         fittings: state?.fittings || null
     };
+
+    console.log('[FITTING][AUTHORITATIVE_APPLY]', {
+        starportId: starportId || null,
+        state: snapshotFittingDebugState(nextState)
+    });
+    console.log('[FITTING][AUTHORITATIVE_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
+
+    return nextState;
 }
+
 
 function snapshotFittingResult(result) {
     const activeShipStats = result?.active_ship_stats || null;
@@ -31,12 +40,18 @@ export function applyCommanderInstallFittingState(prev, context) {
         gameManager
     } = context;
 
-    console.debug('[FITTING][INSTALL][REQUEST]', {
+    console.log('[FITTING][INSTALL][REQUEST]', {
         slotId: activeFittingSlot?.id || null,
         slotType: activeFittingSlot?.type || null,
         itemId: item?.id || item?.module_id || item?.moduleId || null,
         itemName: item?.name || item?.display_name || null,
         itemLocation: item?.location || null,
+        state: snapshotFittingDebugState(prev)
+    });
+
+    console.log('[FITTING][UNFIT][REQUEST]', {
+        slotId: slotId || activeFittingSlot?.id || null,
+        slotType: activeFittingSlot?.type || null,
         state: snapshotFittingDebugState(prev)
     });
 
@@ -75,12 +90,13 @@ export function applyCommanderInstallFittingState(prev, context) {
     }
 
     const nextState = { ...prev, ...updateObj };
-    console.debug('[FITTING][INSTALL][CLIENT_APPLY]', {
+
+    console.log('[FITTING][INSTALL][CLIENT_APPLY]', {
         slotId: activeFittingSlot?.id || null,
         itemId: item?.id || item?.module_id || item?.moduleId || null,
         state: snapshotFittingDebugState(nextState)
     });
-    console.debug('[FITTING][INSTALL][CLIENT_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
+    console.log('[FITTING][INSTALL][CLIENT_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
 
     return nextState;
 }
@@ -92,12 +108,6 @@ export function applyCommanderUnfitFittingState(prev, context) {
         getLiveShipResources,
         gameManager
     } = context;
-
-    console.debug('[FITTING][UNFIT][REQUEST]', {
-        slotId: slotId || activeFittingSlot?.id || null,
-        slotType: activeFittingSlot?.type || null,
-        state: snapshotFittingDebugState(prev)
-    });
 
     const fittingCategory = activeFittingSlot.type === 'outfit' ? 'commanderOutfit' : 'commanderImplants';
     const nextInventory = [...(prev.inventory || [])];
@@ -120,11 +130,12 @@ export function applyCommanderUnfitFittingState(prev, context) {
     }
 
     const nextState = { ...prev, ...updateObj };
-    console.debug('[FITTING][UNFIT][CLIENT_APPLY]', {
+
+    console.log('[FITTING][UNFIT][CLIENT_APPLY]', {
         slotId: slotId || activeFittingSlot?.id || null,
         state: snapshotFittingDebugState(nextState)
     });
-    console.debug('[FITTING][UNFIT][CLIENT_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
+    console.log('[FITTING][UNFIT][CLIENT_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
 
     return nextState;
 }
@@ -137,7 +148,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
         hydrateVessel
     } = context;
 
-    console.debug('[FITTING][BACKEND_RESULT]', {
+    console.log('[FITTING][BACKEND_RESULT]', {
         starportId: starportId || null,
         result: snapshotFittingResult(result),
         previousState: snapshotFittingDebugState(prev)
@@ -211,12 +222,4 @@ export function applyAuthoritativeFittingResult(prev, context) {
         currentLiveShipId: nextCombatStats?.shipId || prev.currentLiveShipId,
         shipId: nextCombatStats?.shipId || prev.shipId
     };
-
-    console.debug('[FITTING][AUTHORITATIVE_APPLY]', {
-        starportId: starportId || null,
-        state: snapshotFittingDebugState(nextState)
-    });
-    console.debug('[FITTING][AUTHORITATIVE_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
-
-    return nextState;
 }
