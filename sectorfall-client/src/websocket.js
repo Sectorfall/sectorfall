@@ -141,6 +141,7 @@ export class BackendSocket {
     this._pendingCommanderProfileUpdates = new Map();
     this._pendingRepairRequests = new Map();
     this._pendingActivateRequests = new Map();
+    this._pendingRespawnRequests = new Map();
     this._pendingFabricationRequests = new Map();
     this._pendingMarketRequests = new Map();
     this.arenaHooks = null;
@@ -328,6 +329,10 @@ export class BackendSocket {
 
       case "WELCOME":
         this.handleWelcome(data);
+        break;
+
+      case "RESPAWN_HOME_RESULT":
+        this.handleRespawnHomeResult(data);
         break;
 
       case "INITIAL_PLAYERS":
@@ -631,6 +636,18 @@ export class BackendSocket {
     }
   }
 
+
+  handleRespawnHomeResult(data) {
+    const pending = data?.requestId ? this._pendingRespawnRequests.get(data.requestId) : null;
+    if (pending) {
+      this._pendingRespawnRequests.delete(data.requestId);
+      pending.resolve(data);
+      return;
+    }
+    if (data?.ok === false) {
+      console.warn("[Backend] RESPAWN_HOME rejected:", data?.error || "unknown", data);
+    }
+  }
 
   // -----------------------------------------------------
   // DOCKED HANDLER
@@ -2026,6 +2043,28 @@ if (fireSolution && typeof fireSolution === "object") {
     });
   }
 
+
+  requestRespawnHome({ starportId } = {}) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId) return Promise.resolve(null);
+    const requestId = `respawn-${Date.now()}-${++this.seq}`;
+    return new Promise((resolve) => {
+      this._pendingRespawnRequests.set(requestId, { resolve, createdAt: Date.now(), starportId });
+      this.socket.send(JSON.stringify({
+        type: "RESPAWN_HOME",
+        requestId,
+        userId: this.userId,
+        starport_id: starportId,
+        clientTime: Date.now()
+      }));
+      setTimeout(() => {
+        const pending = this._pendingRespawnRequests.get(requestId);
+        if (pending) {
+          this._pendingRespawnRequests.delete(requestId);
+          pending.resolve(null);
+        }
+      }, 6000);
+    });
+  }
   requestFabricateBlueprint({ starportId, blueprintInstanceId, blueprintId, ingredients = [] } = {}) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId || !blueprintInstanceId) return Promise.resolve(null);
     const requestId = `fabricate-${Date.now()}-${++this.seq}`;

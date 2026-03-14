@@ -10612,20 +10612,32 @@ showStarportUI: function (starportId) {
         setBattlegroundExtractState(null);
         setBattlegroundState(prev => ({ ...prev, open: false, status: 'idle', currentInstanceId: null, bankedCredits: 0, choice: null, hud: { currentWave: 0, enemiesRemaining: 0, statusLabel: 'STANDBY' } }));
 
-        // 3. Teleport and Dock at Home Starport
-        if (gameManagerRef.current) {
-            await gameManagerRef.current.loadSystem(respawnSystemId, homeStarport);
-            gameManagerRef.current.setDocked(true);
-            
-            // Absolute Visibility Suppression: No ship should be rendered in space during docking
-            if (gameManagerRef.current.ship?.sprite) {
-                gameManagerRef.current.ship.sprite.visible = false;
-                gameManagerRef.current.ship.sprite.position.set(0, 0, 0);
-                gameManagerRef.current.ship.velocity.set(0, 0);
-            }
+        // 3. Request authoritative home-starport respawn from backend.
+        // websocket.js DOCKED handling will load the correct system and show starport UI.
+        if (gameManagerRef.current?.ship?.sprite) {
+            gameManagerRef.current.ship.sprite.visible = false;
+            gameManagerRef.current.ship.sprite.position.set(0, 0, 0);
         }
-        
-        setIsDocked(true);
+        if (gameManagerRef.current?.ship?.velocity) {
+            gameManagerRef.current.ship.velocity.set(0, 0);
+        }
+
+        let respawnResult = null;
+        try {
+            if (window.backendSocket?.requestRespawnHome) {
+                respawnResult = await window.backendSocket.requestRespawnHome({ starportId: homeStarport });
+            } else {
+                console.warn('[handleRespawn] backendSocket.requestRespawnHome unavailable; local dock fallback would desync authority.');
+            }
+        } catch (err) {
+            console.error('[handleRespawn] Authoritative respawn request failed:', err);
+        }
+
+        if (!respawnResult?.ok) {
+            showNotification('RESPAWN FAILED - BACKEND DID NOT CONFIRM DOCK STATE', 'error');
+            return;
+        }
+
         showNotification(`Vessel lost. Respawning at Port ${homeStarport.replace(/_/g, ' ')}.`, "info");
     };
 
