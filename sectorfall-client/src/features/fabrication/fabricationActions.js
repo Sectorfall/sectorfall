@@ -1,4 +1,4 @@
-import { buildFabricationIngredientPayload, resolveFabricationBlueprintId } from './fabricationHelpers.js';
+import { buildFabricationIngredientPayload, resolveFabricationBlueprintId, getFabricationErrorMessage, getFabricationSuccessMessage } from './fabricationHelpers.js';
 
 export function buildFabricationRequestPayload({ starportId, blueprintData, blueprintItem, ingredients }) {
     return {
@@ -10,8 +10,8 @@ export function buildFabricationRequestPayload({ starportId, blueprintData, blue
 }
 
 export function buildFabricationStateUpdate({ prev, result, starportId, hydrateItem, hydrateVessel }) {
-    const nextInventory = (Array.isArray(result.cargo) ? result.cargo : prev.inventory).map(item => hydrateItem(item));
-    const nextStorage = (Array.isArray(result.storage) ? result.storage : (prev.storage?.[starportId] || [])).map(item => hydrateItem(item));
+    const nextInventory = (Array.isArray(result.cargoItems) ? result.cargoItems : (Array.isArray(result.cargo) ? result.cargo : prev.inventory)).map(item => hydrateItem(item));
+    const nextStorage = (Array.isArray(result.storageItems) ? result.storageItems : (Array.isArray(result.storage) ? result.storage : (prev.storage?.[starportId] || []))).map(item => hydrateItem(item));
     const nextOwnedShips = Array.isArray(result.ownedShips)
         ? result.ownedShips.map(ship => hydrateVessel(ship, ship))
         : prev.ownedShips;
@@ -33,6 +33,54 @@ export function buildFabricationStateUpdate({ prev, result, starportId, hydrateI
     };
 }
 
+
+
+export async function executeFabricationTransaction({
+    backendSocket,
+    buildRequestPayload,
+    buildStateUpdate,
+    starportId,
+    blueprintData,
+    blueprintItem,
+    ingredients,
+    avgQL,
+    setGameState,
+    hydrateItem,
+    hydrateVessel,
+    showNotification
+}) {
+    const result = await backendSocket.requestFabricateBlueprint(buildRequestPayload({
+        starportId,
+        blueprintData,
+        blueprintItem,
+        ingredients
+    }));
+
+    if (!result) {
+        showNotification('FABRICATION FAILED: Backend timeout.', 'error');
+        return { ok: false, error: 'timeout' };
+    }
+
+    if (!result.ok) {
+        showNotification(getFabricationErrorMessage(result.error), 'error');
+        return result;
+    }
+
+    setGameState(prev => buildStateUpdate({
+        prev,
+        result,
+        starportId,
+        hydrateItem,
+        hydrateVessel
+    }).nextState);
+
+    if (result?.commanderState && typeof result.commanderState.credits === 'number') {
+        window.dispatchEvent(new CustomEvent('sectorfall:commander_state', { detail: result.commanderState }));
+    }
+
+    showNotification(getFabricationSuccessMessage(result, blueprintData, avgQL), 'success');
+    return result;
+}
 
 export function buildRefineryRequestPayload({ starportId, item, source, filteredIndex = -1, inventory = [], stationStorage = [] }) {
     const sourceKey = String(source || '').trim().toLowerCase() === 'ship' ? 'ship' : 'storage';

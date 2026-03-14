@@ -2977,24 +2977,6 @@ async function loadShipState(userId) {
     console.log("[Backend] No ship_states_v2 found for", userId, error?.message || error);
     return null;
   }
-
-  const normalizedCargo = normalizeStableItemList(Array.isArray(state?.cargo) ? state.cargo : []);
-  if (normalizedCargo.changed) {
-    const nextTelemetry = state?.telemetry && typeof state.telemetry === 'object'
-      ? { ...state.telemetry, cargo: normalizedCargo.items }
-      : state?.telemetry;
-    const { error: persistError } = await supabase
-      .from("ship_states_v2")
-      .update({ cargo: normalizedCargo.items, telemetry: nextTelemetry, updated_at: nowIso() })
-      .eq("player_id", userId);
-    if (persistError) {
-      console.warn('[Backend] Failed to normalize cargo item ids:', userId, persistError.message);
-    } else {
-      state.cargo = normalizedCargo.items;
-      if (nextTelemetry && typeof nextTelemetry === 'object') state.telemetry = nextTelemetry;
-    }
-  }
-
   return state;
 }
 
@@ -4249,41 +4231,6 @@ function cloneItems(items) {
   return Array.isArray(items) ? items.map((it) => (it && typeof it === "object" ? { ...it } : it)) : [];
 }
 
-function normalizeStableItemIdentity(item) {
-  if (!item || typeof item !== "object") return { item, changed: false };
-  const nextItem = { ...item };
-  const fallbackId = String(nextItem.id || nextItem.instance_id || nextItem.instanceId || nextItem.item_instance_id || nextItem.itemInstanceId || '').trim();
-  const stableId = fallbackId || crypto.randomUUID();
-  let changed = false;
-
-  if (String(nextItem.id || '').trim() !== stableId) {
-    nextItem.id = stableId;
-    changed = true;
-  }
-  if (String(nextItem.instance_id || '').trim() !== stableId) {
-    nextItem.instance_id = stableId;
-    changed = true;
-  }
-  if (String(nextItem.instanceId || '').trim() !== stableId) {
-    nextItem.instanceId = stableId;
-    changed = true;
-  }
-
-  return { item: nextItem, changed };
-}
-
-function normalizeStableItemList(items) {
-  if (!Array.isArray(items)) return { items: [], changed: false };
-  let changed = false;
-  const normalized = items.map((entry) => {
-    if (!entry || typeof entry !== "object") return entry;
-    const result = normalizeStableItemIdentity(entry);
-    if (result.changed) changed = true;
-    return result.item;
-  });
-  return { items: normalized, changed };
-}
-
 function findMarketItemIndex(list, itemType) {
   const needle = String(itemType || "").trim().toLowerCase();
   return Array.isArray(list) ? list.findIndex((i) => {
@@ -4352,11 +4299,6 @@ function buildStoredMarketItem(itemType, quantity = 1) {
   };
 }
 
-async function buildMarketStorageStatePayload(playerId, starportId) {
-  const inventory = await loadInventoryStateServer(playerId, starportId);
-  return Array.isArray(inventory?.items) ? inventory.items : [];
-}
-
 async function loadInventoryStateServer(playerId, starportId) {
   const normalizedStarportId = normalizeStarportId(starportId);
   const { data, error } = await supabase
@@ -4366,26 +4308,19 @@ async function loadInventoryStateServer(playerId, starportId) {
     .eq("starport_id", normalizedStarportId)
     .maybeSingle();
   if (error) throw error;
-
-  const normalizedItems = normalizeStableItemList(Array.isArray(data?.items) ? data.items : []);
-  if (normalizedItems.changed) {
-    await saveInventoryStateServer(playerId, normalizedStarportId, normalizedItems.items);
-  }
-
   return {
     player_id: playerId,
     starport_id: normalizedStarportId,
-    items: normalizedItems.items
+    items: Array.isArray(data?.items) ? data.items : []
   };
 }
 
 async function saveInventoryStateServer(playerId, starportId, items = []) {
   const normalizedStarportId = normalizeStarportId(starportId);
-  const normalizedItems = normalizeStableItemList(cloneItems(items));
   const payload = {
     player_id: playerId,
     starport_id: normalizedStarportId,
-    items: normalizedItems.items
+    items: cloneItems(items)
   };
   const { data, error } = await supabase
     .from("inventory_states")
@@ -5508,6 +5443,9 @@ async function handleFabricateBlueprint(socket, data) {
         .from('hangar_states')
         .upsert(hangarPayload, { onConflict: 'player_id,starport_id,ship_id' });
       if (commanderError) throw commanderError;
+      ownedShips = (await loadHangarShipsForPlayer(userId))
+        .map(buildOwnedShipEntryFromHangarRow)
+        .filter(Boolean);
     } else {
       const moduleDef = gameContentCache.modulesById.get(blueprint.output_id) || null;
       if (!moduleDef) {
@@ -5516,7 +5454,6 @@ async function handleFabricateBlueprint(socket, data) {
       }
       craftedOutput = buildCraftedModuleItem(blueprint, moduleDef, avgQL, craftedAt);
       storage.push(craftedOutput);
-      await saveInventoryStateServer(userId, dockedStarport, storage);
     }
 
     await saveInventoryStateServer(userId, dockedStarport, storage);
@@ -5538,7 +5475,9 @@ async function handleFabricateBlueprint(socket, data) {
       avgQL: Number(avgQL.toFixed(1)),
       output: craftedOutput,
       cargo,
+      cargoItems: cargo,
       storage,
+      storageItems: storage,
       ownedShips,
       commanderState: commanderState ? { credits: Number(commanderState.credits || 0) } : null
     });
@@ -5782,14 +5721,12 @@ async function handleMarketCreateSellOrder(socket, data) {
 
     const matchResult = await attemptMatchOpenOrders(dockedStarport, itemType);
     const commanderState = await ensureCommanderWallet(userId);
-    const storageItems = await buildMarketStorageStatePayload(userId, dockedStarport);
     sendMarketActionResult(socket, {
       requestId,
       ok: true,
       action: "MARKET_CREATE_SELL_ORDER",
       listing,
       matched: matchResult.matched,
-      storageItems,
       commanderState: { credits: Number(commanderState?.credits || 0) }
     });
   } catch (e) {
@@ -5993,7 +5930,6 @@ async function handleMarketBuyListing(socket, data) {
       total: totalPrice
     });
 
-    const storageItems = await buildMarketStorageStatePayload(userId, dockedStarport);
     sendMarketActionResult(socket, {
       requestId,
       ok: true,
@@ -6001,7 +5937,6 @@ async function handleMarketBuyListing(socket, data) {
       success: true,
       listingId,
       quantity: tradeQty,
-      storageItems,
       commanderState: { credits: walletResult.credits }
     });
   } catch (e) {
@@ -6052,8 +5987,7 @@ async function handleMarketCancelSellOrder(socket, data) {
       .eq("listing_id", listingId);
     if (updateErr) throw updateErr;
 
-    const storageItems = await buildMarketStorageStatePayload(userId, dockedStarport);
-    sendMarketActionResult(socket, { requestId, ok: true, action: "MARKET_CANCEL_SELL_ORDER", listingId, storageItems });
+    sendMarketActionResult(socket, { requestId, ok: true, action: "MARKET_CANCEL_SELL_ORDER", listingId });
   } catch (e) {
     sendMarketActionResult(socket, { requestId, ok: false, error: e?.message || "cancel_sell_failed" });
   }

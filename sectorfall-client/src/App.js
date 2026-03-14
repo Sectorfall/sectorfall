@@ -36,8 +36,8 @@ import { useCargoMenuState } from './features/inventory/inventoryState.js';
 import { getCurrentTradeStarportId, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
 import { useTradeHubState } from './features/trade/tradeState.js';
 import { createTradeListingTransaction, buyTradeListingTransaction, createTradeBuyOrderTransaction, cancelTradeListingTransaction } from './features/trade/tradeActions.js';
-import { buildFabricationRequestPayload, buildFabricationStateUpdate, buildRefineryRequestPayload, buildRefineryStateUpdateFromResult } from './features/fabrication/fabricationActions.js';
-import { getFabricationErrorMessage, getFabricationSuccessMessage, getRefineryErrorMessage } from './features/fabrication/fabricationHelpers.js';
+import { buildFabricationRequestPayload, buildFabricationStateUpdate, executeFabricationTransaction, buildRefineryRequestPayload, buildRefineryStateUpdateFromResult } from './features/fabrication/fabricationActions.js';
+import { getRefineryErrorMessage } from './features/fabrication/fabricationHelpers.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -3607,15 +3607,6 @@ const RefineryMenu = ({ gameState, onRefine }) => {
     const stationCargo = currentStarportId ? (gameState.storage[currentStarportId] || []).filter(i => i.type === 'resource' && !i.isRefined) : [];
 
     const handleRefineClick = (item, source, filteredIndex) => {
-        console.log('[REFINERY DEBUG] clicked refinery list item', item);
-        console.log('[REFINERY UI] button clicked', {
-            itemId: item?.id || null,
-            itemName: item?.name || null,
-            source,
-            filteredIndex,
-            amount: item?.amount ?? null,
-            isRefined: !!item?.isRefined
-        });
         onRefine(item, source, filteredIndex);
     };
 
@@ -10844,10 +10835,12 @@ showStarportUI: function (starportId) {
         try {
             const result = await createTradeListingTransaction({
                 MarketSystem,
+                cloudService,
                 item,
                 price,
                 quantity,
-                currentStarportId
+                currentStarportId,
+                userId: cloudService.user?.id
             });
 
             showNotification(result.successMessage, "success");
@@ -10874,6 +10867,7 @@ showStarportUI: function (starportId) {
         try {
             const result = await buyTradeListingTransaction({
                 MarketSystem,
+                cloudService,
                 listing,
                 quantity,
                 buyerId,
@@ -11048,8 +11042,10 @@ showStarportUI: function (starportId) {
             const currentStarportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
             const result = await cancelTradeListingTransaction({
                 MarketSystem,
+                cloudService,
                 listingId,
-                currentStarportId
+                currentStarportId,
+                userId: cloudService.user?.id
             });
             showNotification(result.successMessage, "info");
             
@@ -11316,37 +11312,20 @@ showStarportUI: function (starportId) {
         }
 
         try {
-            const result = await backendSocket.requestFabricateBlueprint(buildFabricationRequestPayload({
+            return await executeFabricationTransaction({
+                backendSocket,
+                buildRequestPayload: buildFabricationRequestPayload,
+                buildStateUpdate: buildFabricationStateUpdate,
                 starportId,
                 blueprintData,
                 blueprintItem,
-                ingredients
-            }));
-
-            if (!result) {
-                showNotification("FABRICATION FAILED: Backend timeout.", "error");
-                return { ok: false, error: 'timeout' };
-            }
-
-            if (!result.ok) {
-                showNotification(getFabricationErrorMessage(result.error), "error");
-                return result;
-            }
-
-            setGameState(prev => buildFabricationStateUpdate({
-                prev,
-                result,
-                starportId,
+                ingredients,
+                avgQL,
+                setGameState,
                 hydrateItem,
-                hydrateVessel
-            }).nextState);
-
-            if (result?.commanderState && typeof result.commanderState.credits === 'number') {
-                window.dispatchEvent(new CustomEvent('sectorfall:commander_state', { detail: result.commanderState }));
-            }
-
-            showNotification(getFabricationSuccessMessage(result, blueprintData, avgQL), 'success');
-            return result;
+                hydrateVessel,
+                showNotification
+            });
         } catch (err) {
             console.warn('[Fabricate][Client] backend fabricate failed', err);
             showNotification('FABRICATION FAILED: Backend rejected the request.', 'error');
@@ -11703,51 +11682,22 @@ backendSocket.sendUndock(
 
     const handleRefine = async (item, source, filteredIndex = -1) => {
         const starportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
-        console.log('[REFINERY DEBUG] refinery item object', item);
-        console.log('[REFINERY DEBUG] station storage snapshot', (gameState.storage?.[starportId] || []).filter(i => i.type === 'resource' && !i.isRefined));
-        console.log('[REFINERY UI] refine handler entered', {
-            currentSystemId: gameState.currentSystem?.id || null,
-            starportId: starportId || null,
-            itemId: item?.id || null,
-            itemName: item?.name || null,
-            source,
-            filteredIndex,
-            socketState: backendSocket?.socket?.readyState,
-            socketOpen: backendSocket?.socket?.readyState === WebSocket.OPEN,
-            hasUserId: !!backendSocket?.userId
-        });
         if (!starportId) {
-            console.warn('[REFINERY UI] blocked before request: no starport mapping for current system', {
-                currentSystemId: gameState.currentSystem?.id || null
-            });
             showNotification(getRefineryErrorMessage('not_docked'), 'error');
             return { ok: false, error: 'not_docked' };
         }
 
         try {
-            const requestPayload = buildRefineryRequestPayload({
+            const result = await backendSocket.requestRefineOre(buildRefineryRequestPayload({
                 starportId,
                 item,
                 source,
                 filteredIndex,
                 inventory: gameState.inventory,
                 stationStorage: gameState.storage?.[starportId] || []
-            });
-
-            console.log('[REFINERY UI] sending REFINE_ORE_REQUEST', requestPayload);
-
-            const result = await backendSocket.requestRefineOre(requestPayload);
+            }));
 
             if (!result) {
-                console.warn('[REFINERY UI] request returned null before backend result', {
-                    starportId,
-                    itemId: item?.id || null,
-                    source,
-                    filteredIndex,
-                    socketState: backendSocket?.socket?.readyState,
-                    socketOpen: backendSocket?.socket?.readyState === WebSocket.OPEN,
-                    hasUserId: !!backendSocket?.userId
-                });
                 showNotification('REFINING FAILED: Backend timeout.', 'error');
                 return { ok: false, error: 'timeout' };
             }
