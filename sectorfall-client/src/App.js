@@ -8931,6 +8931,8 @@ useEffect(() => {
 
 
 useEffect(() => {
+    if (!window.__SECTORFALL_DEBUG_SHIPDISPLAY__) return;
+
     const activeShip = gameState.ownedShips.find(s => s && s.id === gameState.activeShipId)
         || gameState.hangarShips.find(s => s && s.id === gameState.activeShipId)
         || null;

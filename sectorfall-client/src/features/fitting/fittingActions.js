@@ -10,6 +10,49 @@ const DEFAULT_SHIP_FITTINGS = {
     synapse3: null
 };
 
+const getFirstFiniteNumber = (...values) => {
+    for (const value of values) {
+        const num = Number(value);
+        if (Number.isFinite(num)) return num;
+    }
+    return null;
+};
+
+const getShieldModuleTotals = (fittings) => {
+    const modules = Object.values(fittings || {}).filter(Boolean);
+    let capacity = 0;
+    let regen = 0;
+
+    for (const module of modules) {
+        const shieldStats = module?.shield || module?.shield_stats || module?.final_stats?.shield || module?.final_stats?.shield_stats || module?.module_stats?.shield || module?.module_stats?.shield_stats || null;
+        const moduleCapacity = getFirstFiniteNumber(
+            shieldStats?.capacity,
+            shieldStats?.maxShields,
+            module?.final_stats?.capacity,
+            module?.final_stats?.maxShields,
+            module?.module_stats?.capacity,
+            module?.module_stats?.maxShields,
+            module?.capacity,
+            module?.maxShields
+        ) || 0;
+        const moduleRegen = getFirstFiniteNumber(
+            shieldStats?.regen,
+            shieldStats?.shieldRegen,
+            module?.final_stats?.regen,
+            module?.final_stats?.shieldRegen,
+            module?.module_stats?.regen,
+            module?.module_stats?.shieldRegen,
+            module?.regen,
+            module?.shieldRegen
+        ) || 0;
+
+        if (moduleCapacity > 0) capacity += moduleCapacity;
+        if (moduleRegen > 0) regen += moduleRegen;
+    }
+
+    return { capacity, regen };
+};
+
 export function applyCommanderInstallFittingState(prev, context) {
     const {
         item,
@@ -132,16 +175,20 @@ export function applyAuthoritativeFittingResult(prev, context) {
         ? nextActiveShipStats.maxEnergy
         : (Number.isFinite(nextCombatStats?.maxEnergy) ? nextCombatStats.maxEnergy : prev.maxEnergy);
 
-    let resolvedShields = Number.isFinite(nextActiveShipStats?.shields) ? nextActiveShipStats.shields : prev.shields;
-    if (resolvedMaxShields > 0 && !(prev.maxShields > 0) && !(resolvedShields > 0)) {
-        resolvedShields = resolvedMaxShields;
-    }
-
     const activeShipKey = prev.activeShipId;
     const normalizedFittings = {
         ...DEFAULT_SHIP_FITTINGS,
         ...(nextActiveShipStats?.fittings || prev.fittings || {})
     };
+    const fittedShieldTotals = getShieldModuleTotals(normalizedFittings);
+    const finalResolvedMaxShields = resolvedMaxShields > 0
+        ? resolvedMaxShields
+        : (fittedShieldTotals.capacity > 0 ? fittedShieldTotals.capacity : resolvedMaxShields);
+
+    let resolvedShields = Number.isFinite(nextActiveShipStats?.shields) ? nextActiveShipStats.shields : prev.shields;
+    if (finalResolvedMaxShields > 0 && !(resolvedShields > 0)) {
+        resolvedShields = finalResolvedMaxShields;
+    }
     const nextOwnedShips = Array.isArray(nextOwnedShipsBase)
         ? nextOwnedShipsBase.map((ship) => {
             if (!ship || ship.id !== activeShipKey) return ship;
@@ -150,7 +197,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
                 hp: Number.isFinite(nextActiveShipStats?.hp) ? nextActiveShipStats.hp : ship.hp,
                 maxHp: resolvedMaxHp,
                 shields: resolvedShields,
-                maxShields: resolvedMaxShields,
+                maxShields: finalResolvedMaxShields,
                 energy: Number.isFinite(nextActiveShipStats?.energy) ? nextActiveShipStats.energy : ship.energy,
                 maxEnergy: resolvedMaxEnergy,
                 armor: Number.isFinite(nextCombatStats?.armor) ? nextCombatStats.armor : ship.armor,
@@ -175,7 +222,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
         hp: Number.isFinite(nextActiveShipStats?.hp) ? nextActiveShipStats.hp : prev.hp,
         maxHp: resolvedMaxHp,
         shields: resolvedShields,
-        maxShields: resolvedMaxShields,
+        maxShields: finalResolvedMaxShields,
         energy: Number.isFinite(nextActiveShipStats?.energy) ? nextActiveShipStats.energy : prev.energy,
         maxEnergy: resolvedMaxEnergy,
         combat_stats: nextCombatStats,
@@ -201,6 +248,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
                 gameManager.stats.maxHp = nextState.maxHp;
                 gameManager.stats.shields = nextState.shields;
                 gameManager.stats.maxShields = nextState.maxShields;
+                gameManager.stats.shieldRegen = fittedShieldTotals.regen;
                 gameManager.stats.energy = nextState.energy;
                 gameManager.stats.maxEnergy = nextState.maxEnergy;
                 if (typeof nextState.armor === 'number') gameManager.stats.armor = nextState.armor;
@@ -221,6 +269,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
                 gameManager.ship.maxHp = nextState.maxHp;
                 gameManager.ship.shields = nextState.shields;
                 gameManager.ship.maxShields = nextState.maxShields;
+                gameManager.ship.shieldRegen = fittedShieldTotals.regen;
                 gameManager.ship.energy = nextState.energy;
                 gameManager.ship.maxEnergy = nextState.maxEnergy;
                 if (typeof nextState.armor === 'number') gameManager.ship.armor = nextState.armor;
@@ -245,6 +294,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
                 maxHp: nextState.maxHp,
                 shields: nextState.shields,
                 maxShields: nextState.maxShields,
+                shieldRegen: fittedShieldTotals.regen,
                 energy: nextState.energy,
                 maxEnergy: nextState.maxEnergy,
                 combat_stats: nextCombatStats,
