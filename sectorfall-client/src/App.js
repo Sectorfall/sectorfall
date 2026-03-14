@@ -36,7 +36,7 @@ import { useCargoMenuState } from './features/inventory/inventoryState.js';
 import { getCurrentTradeStarportId, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
 import { useTradeHubState } from './features/trade/tradeState.js';
 import { createTradeListingTransaction, buyTradeListingTransaction, createTradeBuyOrderTransaction, cancelTradeListingTransaction } from './features/trade/tradeActions.js';
-import { buildFabricationRequestPayload, buildFabricationStateUpdate, buildRefineryStateUpdate } from './features/fabrication/fabricationActions.js';
+import { buildFabricationRequestPayload, buildFabricationStateUpdate, buildRefineryRequestPayload, buildRefineryStateUpdateFromResult } from './features/fabrication/fabricationActions.js';
 import { getFabricationErrorMessage, getFabricationSuccessMessage, getRefineryErrorMessage } from './features/fabrication/fabricationHelpers.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
@@ -11517,30 +11517,47 @@ backendSocket.sendUndock(
         });
     };
 
-    const handleRefine = (item, source, filteredIndex = -1) => {
+    const handleRefine = async (item, source, filteredIndex = -1) => {
         const starportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
-        if (!starportId) return;
+        if (!starportId) {
+            showNotification(getRefineryErrorMessage('not_docked'), 'error');
+            return { ok: false, error: 'not_docked' };
+        }
 
-        setGameState(prev => {
-            const refineResult = buildRefineryStateUpdate({
-                prev,
+        try {
+            const result = await backendSocket.requestRefineOre(buildRefineryRequestPayload({
                 starportId,
                 item,
                 source,
                 filteredIndex,
-                stationCapacity: 1000
-            });
+                inventory: gameState.inventory,
+                stationStorage: gameState.storage?.[starportId] || []
+            }));
 
-            if (!refineResult.ok) {
-                showNotification(getRefineryErrorMessage(refineResult.error), 'error');
-                return prev;
+            if (!result) {
+                showNotification('REFINING FAILED: Backend timeout.', 'error');
+                return { ok: false, error: 'timeout' };
             }
 
-            cloudService.saveInventoryState(cloudUser.id, starportId, refineResult.nextStationStorage, 'refineOre');
-            showNotification(`Refining Complete: ${refineResult.refinedAmount} units of ${refineResult.refinedName} produced at QL ${refineResult.refinedQL}.`, 'success');
+            if (!result.ok) {
+                showNotification(getRefineryErrorMessage(result.error), 'error');
+                return result;
+            }
 
-            return refineResult.nextState;
-        });
+            setGameState(prev => buildRefineryStateUpdateFromResult({
+                prev,
+                result,
+                starportId,
+                hydrateItem
+            }).nextState);
+
+            showNotification(`Refining Complete: ${result.refinedAmount} units of ${result.refinedName} produced at QL ${result.refinedQL}.`, 'success');
+            return result;
+        } catch (err) {
+            console.warn('[Refine][Client] backend refine failed', err);
+            showNotification('REFINING FAILED: Backend rejected the request.', 'error');
+            return { ok: false, error: err?.message || 'backend_failure' };
+        }
     };
 
 

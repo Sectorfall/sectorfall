@@ -141,9 +141,10 @@ export class BackendSocket {
     this._pendingCommanderProfileUpdates = new Map();
     this._pendingRepairRequests = new Map();
     this._pendingActivateRequests = new Map();
-    this._pendingFabricationRequests = new Map();
-    this._pendingMarketRequests = new Map();
     this._pendingRespawnRequests = new Map();
+    this._pendingFabricationRequests = new Map();
+    this._pendingRefineryRequests = new Map();
+    this._pendingMarketRequests = new Map();
     this.arenaHooks = null;
     this.battlegroundHooks = null;
     this.instanceBoundaryHooks = null;
@@ -331,6 +332,10 @@ export class BackendSocket {
         this.handleWelcome(data);
         break;
 
+      case "RESPAWN_HOME_RESULT":
+        this.handleRespawnHomeResult(data);
+        break;
+
       case "INITIAL_PLAYERS":
         this.handleInitialPlayers(data.players);
         break;
@@ -516,8 +521,8 @@ export class BackendSocket {
         this.handleFabricationResult(data);
         break;
 
-      case "RESPAWN_HOME_RESULT":
-        this.handleRespawnHomeResult(data);
+      case "REFINERY_RESULT":
+        this.handleRefineryResult(data);
         break;
       case "COMMANDER_PROFILE_RESULT":
         this.handleCommanderProfileResult(data);
@@ -636,6 +641,18 @@ export class BackendSocket {
     }
   }
 
+
+  handleRespawnHomeResult(data) {
+    const pending = data?.requestId ? this._pendingRespawnRequests.get(data.requestId) : null;
+    if (pending) {
+      this._pendingRespawnRequests.delete(data.requestId);
+      pending.resolve(data);
+      return;
+    }
+    if (data?.ok === false) {
+      console.warn("[Backend] RESPAWN_HOME rejected:", data?.error || "unknown", data);
+    }
+  }
 
   // -----------------------------------------------------
   // DOCKED HANDLER
@@ -2033,12 +2050,12 @@ if (fireSolution && typeof fireSolution === "object") {
 
 
   requestRespawnHome({ starportId } = {}) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId) return Promise.resolve(null);
-    const requestId = `respawn-home-${Date.now()}-${++this.seq}`;
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId) return Promise.resolve(null);
+    const requestId = `respawn-${Date.now()}-${++this.seq}`;
     return new Promise((resolve) => {
       this._pendingRespawnRequests.set(requestId, { resolve, createdAt: Date.now(), starportId });
       this.socket.send(JSON.stringify({
-        type: 'RESPAWN_HOME',
+        type: "RESPAWN_HOME",
         requestId,
         userId: this.userId,
         starport_id: starportId,
@@ -2050,10 +2067,9 @@ if (fireSolution && typeof fireSolution === "object") {
           this._pendingRespawnRequests.delete(requestId);
           pending.resolve(null);
         }
-      }, 7000);
+      }, 6000);
     });
   }
-
   requestFabricateBlueprint({ starportId, blueprintInstanceId, blueprintId, ingredients = [] } = {}) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId || !blueprintInstanceId) return Promise.resolve(null);
     const requestId = `fabricate-${Date.now()}-${++this.seq}`;
@@ -2073,6 +2089,30 @@ if (fireSolution && typeof fireSolution === "object") {
         const pending = this._pendingFabricationRequests.get(requestId);
         if (pending) {
           this._pendingFabricationRequests.delete(requestId);
+          pending.resolve(null);
+        }
+      }, 9000);
+    });
+  }
+
+  requestRefineOre({ starportId, itemId, source } = {}) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId || !itemId) return Promise.resolve(null);
+    const requestId = `refine-${Date.now()}-${++this.seq}`;
+    return new Promise((resolve) => {
+      this._pendingRefineryRequests.set(requestId, { resolve, createdAt: Date.now(), itemId, source });
+      this.socket.send(JSON.stringify({
+        type: 'REFINE_ORE_REQUEST',
+        requestId,
+        userId: this.userId,
+        starport_id: starportId,
+        itemId,
+        source,
+        clientTime: Date.now()
+      }));
+      setTimeout(() => {
+        const pending = this._pendingRefineryRequests.get(requestId);
+        if (pending) {
+          this._pendingRefineryRequests.delete(requestId);
           pending.resolve(null);
         }
       }, 9000);
@@ -2311,22 +2351,21 @@ handleMarketActionResult(data) {
     }
   }
 
-  handleRespawnHomeResult(data) {
+  handleRefineryResult(data) {
     try {
       const requestId = data?.requestId;
       if (requestId) {
-        const pending = this._pendingRespawnRequests.get(requestId);
+        const pending = this._pendingRefineryRequests.get(requestId);
         if (pending) {
-          this._pendingRespawnRequests.delete(requestId);
+          this._pendingRefineryRequests.delete(requestId);
           pending.resolve(data);
         }
       }
-      window.dispatchEvent(new CustomEvent('sectorfall:respawn_home_result', { detail: data }));
+      window.dispatchEvent(new CustomEvent('sectorfall:refinery_result', { detail: data }));
     } catch {
       // ignore
     }
   }
-
 
 
   disconnect() {
