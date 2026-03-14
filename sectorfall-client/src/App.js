@@ -10245,6 +10245,19 @@ showStarportUI: function (starportId) {
         }
 
         try {
+            console.log('[FITTING][INSTALL][REQUEST]', {
+                slotId: activeFittingSlot?.id,
+                itemId: item?.id,
+                itemName: item?.name,
+                source: item?.location === 'storage' ? 'storage' : 'ship',
+                starportId,
+                shipId: gameState?.shipId,
+                maxShields: gameState?.maxShields,
+                shields: gameState?.shields,
+                combat_stats: gameState?.combat_stats || gameState?.combatStats,
+                fittings: gameState?.fittings
+            });
+
             const result = await backendSocket.requestCommanderFitting({
                 action: 'install',
                 starportId,
@@ -10262,12 +10275,42 @@ showStarportUI: function (starportId) {
                 return;
             }
 
-            setGameState(prev => applyAuthoritativeFittingResult(prev, {
-                result,
+            console.log('[FITTING][BACKEND_RESULT]', {
+                action: 'install',
                 starportId,
-                hydrateItem,
-                hydrateVessel
-            }));
+                result,
+                currentState: {
+                    shipId: gameState?.shipId,
+                    maxShields: gameState?.maxShields,
+                    shields: gameState?.shields,
+                    combat_stats: gameState?.combat_stats || gameState?.combatStats,
+                    fittings: gameState?.fittings
+                }
+            });
+
+            setGameState(prev => {
+                try {
+                    const next = applyAuthoritativeFittingResult(prev, {
+                        result,
+                        starportId,
+                        hydrateItem,
+                        hydrateVessel
+                    });
+
+                    console.log('[FITTING][INSTALL][CLIENT_APPLY]', {
+                        shipId: next?.shipId || prev?.shipId,
+                        maxShields: next?.maxShields,
+                        shields: next?.shields,
+                        combat_stats: next?.combat_stats || next?.combatStats,
+                        fittings: next?.fittings
+                    });
+
+                    return next && typeof next === 'object' ? next : prev;
+                } catch (applyError) {
+                    console.error('[FITTING][INSTALL][CLIENT_APPLY_ERROR]', applyError, { prev, result, starportId });
+                    return prev;
+                }
+            });
 
             setActiveFittingSlot(null);
             showNotification(`${item.name} installed successfully.`, 'info');
@@ -10302,6 +10345,19 @@ showStarportUI: function (starportId) {
         }
 
         try {
+            console.log('[FITTING][INSTALL][REQUEST]', {
+                slotId: activeFittingSlot?.id,
+                itemId: item?.id,
+                itemName: item?.name,
+                source: item?.location === 'storage' ? 'storage' : 'ship',
+                starportId,
+                shipId: gameState?.shipId,
+                maxShields: gameState?.maxShields,
+                shields: gameState?.shields,
+                combat_stats: gameState?.combat_stats || gameState?.combatStats,
+                fittings: gameState?.fittings
+            });
+
             const result = await backendSocket.requestCommanderFitting({
                 action: 'unfit',
                 starportId,
@@ -10316,12 +10372,42 @@ showStarportUI: function (starportId) {
                 return;
             }
 
-            setGameState(prev => applyAuthoritativeFittingResult(prev, {
-                result,
+            console.log('[FITTING][BACKEND_RESULT]', {
+                action: 'unfit',
                 starportId,
-                hydrateItem,
-                hydrateVessel
-            }));
+                result,
+                currentState: {
+                    shipId: gameState?.shipId,
+                    maxShields: gameState?.maxShields,
+                    shields: gameState?.shields,
+                    combat_stats: gameState?.combat_stats || gameState?.combatStats,
+                    fittings: gameState?.fittings
+                }
+            });
+
+            setGameState(prev => {
+                try {
+                    const next = applyAuthoritativeFittingResult(prev, {
+                        result,
+                        starportId,
+                        hydrateItem,
+                        hydrateVessel
+                    });
+
+                    console.log('[FITTING][UNFIT][CLIENT_APPLY]', {
+                        shipId: next?.shipId || prev?.shipId,
+                        maxShields: next?.maxShields,
+                        shields: next?.shields,
+                        combat_stats: next?.combat_stats || next?.combatStats,
+                        fittings: next?.fittings
+                    });
+
+                    return next && typeof next === 'object' ? next : prev;
+                } catch (applyError) {
+                    console.error('[FITTING][UNFIT][CLIENT_APPLY_ERROR]', applyError, { prev, result, starportId });
+                    return prev;
+                }
+            });
 
             setActiveFittingSlot(null);
             showNotification('Module uninstalled to ship cargo.', 'info');

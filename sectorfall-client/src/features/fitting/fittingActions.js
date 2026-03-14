@@ -1,35 +1,14 @@
-function snapshotFittingDebugState(state) {
-    return {
-        shipId: state?.shipId || state?.currentLiveShipId || state?.combat_stats?.shipId || state?.combatStats?.shipId || null,
-        maxShields: Number.isFinite(state?.maxShields) ? state.maxShields : null,
-        shields: Number.isFinite(state?.shields) ? state.shields : null,
-        combat_stats: state?.combat_stats || state?.combatStats || null,
-        fittings: state?.fittings || null
-    };
-
-    console.log('[FITTING][AUTHORITATIVE_APPLY]', {
-        starportId: starportId || null,
-        state: snapshotFittingDebugState(nextState)
-    });
-    console.log('[FITTING][AUTHORITATIVE_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
-
-    return nextState;
-}
-
-
-function snapshotFittingResult(result) {
-    const activeShipStats = result?.active_ship_stats || null;
-    const combatStats = activeShipStats?.combat_stats || activeShipStats?.combatStats || null;
-    return {
-        shipId: combatStats?.shipId || activeShipStats?.shipId || null,
-        maxShields: Number.isFinite(activeShipStats?.maxShields)
-            ? activeShipStats.maxShields
-            : (Number.isFinite(combatStats?.maxShields) ? combatStats.maxShields : null),
-        shields: Number.isFinite(activeShipStats?.shields) ? activeShipStats.shields : null,
-        combat_stats: combatStats,
-        fittings: activeShipStats?.fittings || null
-    };
-}
+const DEFAULT_SHIP_FITTINGS = {
+    weapon1: null,
+    weapon2: null,
+    active1: null,
+    passive1: null,
+    passive2: null,
+    rig1: null,
+    synapse1: null,
+    synapse2: null,
+    synapse3: null
+};
 
 export function applyCommanderInstallFittingState(prev, context) {
     const {
@@ -39,21 +18,6 @@ export function applyCommanderInstallFittingState(prev, context) {
         getLiveShipResources,
         gameManager
     } = context;
-
-    console.log('[FITTING][INSTALL][REQUEST]', {
-        slotId: activeFittingSlot?.id || null,
-        slotType: activeFittingSlot?.type || null,
-        itemId: item?.id || item?.module_id || item?.moduleId || null,
-        itemName: item?.name || item?.display_name || null,
-        itemLocation: item?.location || null,
-        state: snapshotFittingDebugState(prev)
-    });
-
-    console.log('[FITTING][UNFIT][REQUEST]', {
-        slotId: slotId || activeFittingSlot?.id || null,
-        slotType: activeFittingSlot?.type || null,
-        state: snapshotFittingDebugState(prev)
-    });
 
     const fittingCategory = activeFittingSlot.type === 'outfit' ? 'commanderOutfit' : 'commanderImplants';
     const currentSystemId = prev.currentSystem?.id;
@@ -89,16 +53,7 @@ export function applyCommanderInstallFittingState(prev, context) {
         gameManager.syncFittings(prev.fittings || {});
     }
 
-    const nextState = { ...prev, ...updateObj };
-
-    console.log('[FITTING][INSTALL][CLIENT_APPLY]', {
-        slotId: activeFittingSlot?.id || null,
-        itemId: item?.id || item?.module_id || item?.moduleId || null,
-        state: snapshotFittingDebugState(nextState)
-    });
-    console.log('[FITTING][INSTALL][CLIENT_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
-
-    return nextState;
+    return { ...prev, ...updateObj };
 }
 
 export function applyCommanderUnfitFittingState(prev, context) {
@@ -129,18 +84,15 @@ export function applyCommanderUnfitFittingState(prev, context) {
         gameManager.syncFittings(prev.fittings || {});
     }
 
-    const nextState = { ...prev, ...updateObj };
-
-    console.log('[FITTING][UNFIT][CLIENT_APPLY]', {
-        slotId: slotId || activeFittingSlot?.id || null,
-        state: snapshotFittingDebugState(nextState)
-    });
-    console.log('[FITTING][UNFIT][CLIENT_STATS_AFTER_APPLY]', snapshotFittingDebugState(nextState));
-
-    return nextState;
+    return { ...prev, ...updateObj };
 }
 
 export function applyAuthoritativeFittingResult(prev, context) {
+    if (!prev || typeof prev !== 'object') {
+        console.error('[FITTING][AUTHORITATIVE_APPLY][INVALID_PREV_STATE]', { prev, context });
+        return prev;
+    }
+
     const {
         result,
         starportId,
@@ -148,13 +100,21 @@ export function applyAuthoritativeFittingResult(prev, context) {
         hydrateVessel
     } = context;
 
-    console.log('[FITTING][BACKEND_RESULT]', {
-        starportId: starportId || null,
-        result: snapshotFittingResult(result),
-        previousState: snapshotFittingDebugState(prev)
+    console.log('[FITTING][AUTHORITATIVE_APPLY]', {
+        starportId,
+        result,
+        previousState: {
+            shipId: prev?.shipId,
+            activeShipId: prev?.activeShipId,
+            maxShields: prev?.maxShields,
+            shields: prev?.shields,
+            combat_stats: prev?.combat_stats || prev?.combatStats,
+            fittings: prev?.fittings,
+            inventoryCount: Array.isArray(prev?.inventory) ? prev.inventory.length : null
+        }
     });
 
-    const nextInventory = Array.isArray(result?.cargo) ? result.cargo.map(entry => hydrateItem(entry)) : prev.inventory;
+    const nextInventory = Array.isArray(result?.cargo) ? result.cargo.map(entry => hydrateItem(entry)) : (Array.isArray(prev.inventory) ? prev.inventory : []);
     const nextStorageItems = Array.isArray(result?.storage) ? result.storage.map(entry => hydrateItem(entry)) : (prev.storage?.[starportId] || []);
     const nextCargoWeight = nextInventory.reduce((sum, cargoItem) => sum + (parseFloat(cargoItem.weight) || 0), 0);
     const nextOwnedShipsBase = prev.ownedShips;
@@ -177,6 +137,10 @@ export function applyAuthoritativeFittingResult(prev, context) {
     }
 
     const activeShipKey = prev.activeShipId;
+    const normalizedFittings = {
+        ...DEFAULT_SHIP_FITTINGS,
+        ...(nextActiveShipStats?.fittings || prev.fittings || {})
+    };
     const nextOwnedShips = Array.isArray(nextOwnedShipsBase)
         ? nextOwnedShipsBase.map((ship) => {
             if (!ship || ship.id !== activeShipKey) return ship;
@@ -192,7 +156,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
                 resistances: nextCombatStats?.resistances || ship.resistances,
                 combat_stats: nextCombatStats || ship.combat_stats,
                 combatStats: nextCombatStats || ship.combatStats,
-                fittings: nextActiveShipStats?.fittings || ship.fittings,
+                fittings: normalizedFittings,
                 kineticRes: nextCombatStats?.resistances ? Number(nextCombatStats.resistances.kinetic || 0) : ship.kineticRes,
                 thermalRes: nextCombatStats?.resistances ? Number(nextCombatStats.resistances.thermal || 0) : ship.thermalRes,
                 blastRes: nextCombatStats?.resistances ? Number(nextCombatStats.resistances.blast || 0) : ship.blastRes
@@ -206,7 +170,7 @@ export function applyAuthoritativeFittingResult(prev, context) {
         storage: { ...(prev.storage || {}), [starportId]: nextStorageItems },
         ownedShips: nextOwnedShips,
         currentCargoWeight: nextCargoWeight,
-        fittings: nextActiveShipStats?.fittings || prev.fittings,
+        fittings: normalizedFittings,
         hp: Number.isFinite(nextActiveShipStats?.hp) ? nextActiveShipStats.hp : prev.hp,
         maxHp: resolvedMaxHp,
         shields: resolvedShields,
@@ -222,4 +186,16 @@ export function applyAuthoritativeFittingResult(prev, context) {
         currentLiveShipId: nextCombatStats?.shipId || prev.currentLiveShipId,
         shipId: nextCombatStats?.shipId || prev.shipId
     };
+
+    console.log('[FITTING][AUTHORITATIVE_STATS_AFTER_APPLY]', {
+        shipId: nextState?.shipId,
+        activeShipId: nextState?.activeShipId,
+        maxShields: nextState?.maxShields,
+        shields: nextState?.shields,
+        combat_stats: nextState?.combat_stats || nextState?.combatStats,
+        fittings: nextState?.fittings,
+        inventoryCount: Array.isArray(nextState?.inventory) ? nextState.inventory.length : null
+    });
+
+    return nextState;
 }
