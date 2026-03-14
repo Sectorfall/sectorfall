@@ -220,18 +220,9 @@ export const aggregateShipStats = (ship, fittings) => {
     const ehp = (finalHP + shieldCapacity) / Math.max(0.01, 1 - avgRes);
 
     // Shield restoration stats (aggregated from fittings)
-    const shieldModules = Object.values(shipFittings).filter((m) => (m?.type || '').toLowerCase() === 'shield');
-    const baseShieldRegen = shieldModules.reduce((sum, m) => {
-        const stats = getShieldModuleStats(m) || {};
-        const regen = Number(stats.regen ?? m?.rechargeRate ?? m?.regen ?? 0);
-        return sum + (Number.isFinite(regen) ? regen : 0);
-    }, 0);
-    const baseShieldDelay = shieldModules.reduce((delay, m) => {
-        const stats = getShieldModuleStats(m) || {};
-        const candidate = Number(stats.rechargeDelay ?? m?.rechargeDelay ?? 5);
-        return Number.isFinite(candidate) ? candidate : delay;
-    }, 5);
-
+    const baseShieldRegen = Object.values(shipFittings).reduce((sum, m) => sum + (m?.type === 'shield' ? (m.rechargeRate || 0) : 0), 0);
+    const baseShieldDelay = Object.values(shipFittings).reduce((sum, m) => m?.type === 'shield' ? (m.rechargeDelay || 5) : sum, 5);
+    
     const finalShieldRegen = baseShieldRegen * (1 + shieldRegenBonus);
     const finalShieldDelay = Math.max(0.5, baseShieldDelay * (2 - (1 + shieldDelayBonus))); 
 
@@ -250,7 +241,7 @@ export const aggregateShipStats = (ship, fittings) => {
             average: avgRes
         },
         shields: {
-            max: shieldCapacity,
+            max: ship.maxShields || 0,
             regen: finalShieldRegen,
             delay: finalShieldDelay
         },
