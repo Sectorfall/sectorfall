@@ -800,41 +800,63 @@ export const SHIP_CATALOG = {
 export const SHIP_ID_ALIASES = {
   "CartelGunship": "ship_cartel_gunship_t1",
   "CartelScout": "ship_cartel_scout_t1",
-  "OMNI COMMAND": "ship_omni_command_t1",
-  "OMNI GUNSHIP": "ship_omni_gunship_t1",
-  "OMNI HAULER": "ship_omni_hauler_t1",
-  "OMNI INTERCEPTOR": "ship_omni_interceptor_t1",
-  "OMNI MINING SHIP": "ship_omni_mining_ship_t1",
-  "OMNI SCOUT": "ship_omni_scout_t1",
-  "OMNI SOVEREIGN": "ship_omni_sovereign_t1",
-  "omni-scout-chassis": "ship_omni_scout_t1",
-  "ship_omni_scout": "ship_omni_scout_t1",
-  "ship_omni_interceptor": "ship_omni_interceptor_t1",
-  "ship_omni_gunship": "ship_omni_gunship_t1",
-  "ship_omni_hauler": "ship_omni_hauler_t1",
-  "ship_omni_mining": "ship_omni_mining_ship_t1",
-  "ship_omni_command": "ship_omni_command_t1",
-  "ship_omni_sovereign": "ship_omni_sovereign_t1",
-  "bp_ship_omni_scout": "ship_omni_scout_t1",
-  "bp_ship_omni_interceptor": "ship_omni_interceptor_t1",
-  "bp_ship_omni_gunship": "ship_omni_gunship_t1",
-  "bp_ship_omni_hauler": "ship_omni_hauler_t1",
-  "bp_ship_omni_mining": "ship_omni_mining_ship_t1",
-  "bp_ship_omni_command": "ship_omni_command_t1",
-  "bp_ship_omni_sovereign": "ship_omni_sovereign_t1"
+  "OMNI COMMAND": "ship_omni_command",
+  "OMNI GUNSHIP": "ship_omni_gunship",
+  "OMNI HAULER": "ship_omni_hauler",
+  "OMNI INTERCEPTOR": "ship_omni_interceptor",
+  "OMNI MINING SHIP": "ship_omni_mining",
+  "OMNI SCOUT": "ship_omni_scout",
+  "OMNI SOVEREIGN": "ship_omni_sovereign",
+  "omni-scout-chassis": "ship_omni_scout",
+  "ship_omni_scout": "ship_omni_scout",
+  "ship_omni_interceptor": "ship_omni_interceptor",
+  "ship_omni_gunship": "ship_omni_gunship",
+  "ship_omni_hauler": "ship_omni_hauler",
+  "ship_omni_mining": "ship_omni_mining",
+  "ship_omni_command": "ship_omni_command",
+  "ship_omni_sovereign": "ship_omni_sovereign",
+  "bp_ship_omni_scout": "ship_omni_scout",
+  "bp_ship_omni_interceptor": "ship_omni_interceptor",
+  "bp_ship_omni_gunship": "ship_omni_gunship",
+  "bp_ship_omni_hauler": "ship_omni_hauler",
+  "bp_ship_omni_mining": "ship_omni_mining",
+  "bp_ship_omni_command": "ship_omni_command",
+  "bp_ship_omni_sovereign": "ship_omni_sovereign"
+};
+
+const CANONICAL_PLAYER_SHIP_TEMPLATES = {
+  ship_omni_scout: "ship_omni_scout_t1",
+  ship_omni_interceptor: "ship_omni_interceptor_t1",
+  ship_omni_gunship: "ship_omni_gunship_t1",
+  ship_omni_hauler: "ship_omni_hauler_t1",
+  ship_omni_mining: "ship_omni_mining_ship_t1",
+  ship_omni_command: "ship_omni_command_t1",
+  ship_omni_sovereign: "ship_omni_sovereign_t1"
 };
 
 export function resolveShipId(input) {
   if (!input) return null;
-  const key = String(input);
+  const key = String(input).trim();
+  if (!key) return null;
   if (SHIP_CATALOG[key]) return key;
+  if (CANONICAL_PLAYER_SHIP_TEMPLATES[key]) return key;
   if (SHIP_ID_ALIASES[key]) return SHIP_ID_ALIASES[key];
   return null;
 }
 
 export function resolveShipTemplate(input) {
   const shipId = resolveShipId(input);
-  if (shipId) return SHIP_CATALOG[shipId] || null;
+  if (!shipId) return null;
+  if (SHIP_CATALOG[shipId]) return SHIP_CATALOG[shipId] || null;
+  const templateId = CANONICAL_PLAYER_SHIP_TEMPLATES[shipId];
+  if (templateId && SHIP_CATALOG[templateId]) {
+    return {
+      ...SHIP_CATALOG[templateId],
+      ship_id: shipId,
+      registryKey: shipId,
+      id: shipId
+    };
+  }
   return null;
 }
 
