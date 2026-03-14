@@ -143,6 +143,7 @@ export class BackendSocket {
     this._pendingActivateRequests = new Map();
     this._pendingRespawnRequests = new Map();
     this._pendingFabricationRequests = new Map();
+    this._pendingRefineryRequests = new Map();
     this._pendingMarketRequests = new Map();
     this.arenaHooks = null;
     this.battlegroundHooks = null;
@@ -518,6 +519,10 @@ export class BackendSocket {
 
       case "FABRICATION_RESULT":
         this.handleFabricationResult(data);
+        break;
+
+      case "REFINERY_RESULT":
+        this.handleRefineryResult(data);
         break;
       case "COMMANDER_PROFILE_RESULT":
         this.handleCommanderProfileResult(data);
@@ -2090,6 +2095,30 @@ if (fireSolution && typeof fireSolution === "object") {
     });
   }
 
+  requestRefineOre({ starportId, itemId, source } = {}) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId || !itemId) return Promise.resolve(null);
+    const requestId = `refine-${Date.now()}-${++this.seq}`;
+    return new Promise((resolve) => {
+      this._pendingRefineryRequests.set(requestId, { resolve, createdAt: Date.now(), itemId, source });
+      this.socket.send(JSON.stringify({
+        type: 'REFINE_ORE_REQUEST',
+        requestId,
+        userId: this.userId,
+        starport_id: starportId,
+        itemId,
+        source,
+        clientTime: Date.now()
+      }));
+      setTimeout(() => {
+        const pending = this._pendingRefineryRequests.get(requestId);
+        if (pending) {
+          this._pendingRefineryRequests.delete(requestId);
+          pending.resolve(null);
+        }
+      }, 9000);
+    });
+  }
+
 requestMarketData({ starportId, filter = "listings" } = {}) {
   if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId) return Promise.resolve(null);
   const requestId = `market-data-${Date.now()}-${++this.seq}`;
@@ -2317,6 +2346,22 @@ handleMarketActionResult(data) {
         window.dispatchEvent(new CustomEvent('sectorfall:commander_state', { detail: data.commanderState }));
       }
       window.dispatchEvent(new CustomEvent('sectorfall:fabrication_result', { detail: data }));
+    } catch {
+      // ignore
+    }
+  }
+
+  handleRefineryResult(data) {
+    try {
+      const requestId = data?.requestId;
+      if (requestId) {
+        const pending = this._pendingRefineryRequests.get(requestId);
+        if (pending) {
+          this._pendingRefineryRequests.delete(requestId);
+          pending.resolve(data);
+        }
+      }
+      window.dispatchEvent(new CustomEvent('sectorfall:refinery_result', { detail: data }));
     } catch {
       // ignore
     }

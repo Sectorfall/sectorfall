@@ -4930,6 +4930,15 @@ function sendFabricationResult(socket, payload = {}) {
   }));
 }
 
+function sendRefineryResult(socket, payload = {}) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({
+    type: "REFINERY_RESULT",
+    serverTime: Date.now(),
+    ...payload
+  }));
+}
+
 function getStackAmount(item) {
   if (!item || typeof item !== 'object') return 0;
   if (Number.isFinite(item.amount)) return Number(item.amount);
@@ -4992,6 +5001,60 @@ function parseCanonicalResourceIdFromItem(item) {
     return `resource_refined_${canonicalizeOreName(name)}`;
   }
   return null;
+}
+
+function parseRawOreCanonicalResourceIdFromItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  const directCandidates = [item.resourceId, item.materialKey, item.item_id, item.itemId]
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean);
+  for (const candidate of directCandidates) {
+    if (candidate.startsWith('resource_raw_')) return candidate;
+  }
+  const oreType = String(item.oreType || '').trim();
+  if (oreType) return `resource_raw_${canonicalizeOreName(oreType)}`;
+  const name = String(item.name || '').trim();
+  if (/ore/i.test(name)) {
+    return `resource_raw_${canonicalizeOreName(name)}`;
+  }
+  return null;
+}
+
+function resolveRefineryOreType(item) {
+  const explicitOreType = String(item?.oreType || '').trim();
+  if (explicitOreType) return explicitOreType;
+  const rawId = parseRawOreCanonicalResourceIdFromItem(item);
+  if (rawId && rawId.startsWith('resource_raw_')) {
+    const key = rawId.replace(/^resource_raw_/, '');
+    return key.split('_').map((part) => titleCaseWord(part)).join(' ');
+  }
+  return String(item?.name || '').split(' [')[0].replace(/ Ore/i, '').trim() || 'Unknown';
+}
+
+function buildRefinedResourceItem(rawItem, { oreType, refinedAmount, refinedQL, craftedAt = Date.now() }) {
+  const refinedName = `Refined ${oreType}`;
+  const canonicalOre = canonicalizeOreName(oreType);
+  const rawWeight = parseFloat(rawItem?.weight);
+  const fallbackWeight = Number(getStackAmount(rawItem) || 0) * 0.1;
+  const weight = Number.isFinite(rawWeight) ? rawWeight : fallbackWeight;
+  return {
+    id: `${refinedName}-Refined-QL-${refinedQL}-${craftedAt}`,
+    item_id: `resource_refined_${canonicalOre}`,
+    canonical_output_id: `resource_refined_${canonicalOre}`,
+    resourceId: `resource_refined_${canonicalOre}`,
+    materialKey: `resource_refined_${canonicalOre}`,
+    name: `${refinedName} [QL ${refinedQL}]`,
+    oreType,
+    type: 'resource',
+    isRefined: true,
+    amount: refinedAmount,
+    weight: Number(weight.toFixed(1)),
+    qlBand: refinedQL,
+    quality: refinedQL,
+    avgQL: refinedQL,
+    rarity: rawItem?.rarity || 'common',
+    description: `High-purity ${oreType}. Refined to an exact average quality of ${refinedQL} from ${Array.isArray(rawItem?.qlList) ? rawItem.qlList.length : 'legacy'} raw units.`
+  };
 }
 
 function findBlueprintContentByAnyId(rawId) {
@@ -5365,6 +5428,116 @@ async function handleFabricateBlueprint(socket, data) {
   } catch (e) {
     console.warn('[Fabrication] failed:', e?.message || e);
     sendFabricationResult(socket, { requestId: data?.requestId || null, ok: false, error: e?.message || 'fabrication_failed' });
+  }
+}
+
+
+async function handleRefineOre(socket, data) {
+  const player = players.get(socket);
+  const userId = String(data?.userId || player?.userId || '').trim();
+  const requestId = data?.requestId || null;
+  if (!player || !userId || player.userId !== userId) return;
+
+  try {
+    const dockedStarport = await getDockedMarketStarport(player, userId);
+    const requestedStarport = normalizeStarportId(data?.starport_id);
+    if (!dockedStarport) {
+      sendRefineryResult(socket, { requestId, ok: false, error: 'not_docked' });
+      return;
+    }
+    if (requestedStarport && requestedStarport !== dockedStarport) {
+      sendRefineryResult(socket, { requestId, ok: false, error: 'wrong_starport', expectedStarportId: dockedStarport, gotStarportId: requestedStarport });
+      return;
+    }
+
+    const itemId = String(data?.itemId || data?.item_id || '').trim();
+    const source = String(data?.source || '').trim().toLowerCase() === 'ship' ? 'ship' : 'storage';
+    if (!itemId) {
+      sendRefineryResult(socket, { requestId, ok: false, error: 'missing_item' });
+      return;
+    }
+
+    const shipState = await loadShipState(userId);
+    const cargo = cloneItems(Array.isArray(shipState?.cargo) ? shipState.cargo : []);
+    const storageState = await loadInventoryStateServer(userId, dockedStarport);
+    const storage = cloneItems(storageState.items || []);
+    const sourceList = source === 'ship' ? cargo : storage;
+    const selectedItem = sourceList.find((entry) => String(entry?.id || '') === itemId) || null;
+    if (!selectedItem) {
+      sendRefineryResult(socket, { requestId, ok: false, error: 'selected_item_not_found', itemId, source });
+      return;
+    }
+    if (String(selectedItem?.type || '').trim().toLowerCase() !== 'resource' || selectedItem?.isRefined) {
+      sendRefineryResult(socket, { requestId, ok: false, error: 'invalid_resource', itemId, source });
+      return;
+    }
+
+    const itemWeight = parseFloat(selectedItem?.weight) || (Number(getStackAmount(selectedItem) || 0) * 0.1);
+    const currentStationWeight = storage.reduce((sum, cargoItem) => sum + (parseFloat(cargoItem?.weight) || 5), 0);
+    if (currentStationWeight + itemWeight > 1000) {
+      sendRefineryResult(socket, { requestId, ok: false, error: 'storage_capacity', itemId, source });
+      return;
+    }
+
+    const oreType = resolveRefineryOreType(selectedItem);
+    const refinedName = `Refined ${oreType}`;
+    const refinedQL = Number(parseItemQlValue(selectedItem).toFixed(1));
+    const refinedAmount = Math.floor(Number(getStackAmount(selectedItem) || 0) * 0.75);
+    if (!Number.isFinite(refinedAmount) || refinedAmount <= 0) {
+      sendRefineryResult(socket, { requestId, ok: false, error: 'invalid_refine_amount', itemId, source });
+      return;
+    }
+
+    const removed = removeAmountFromItemById(sourceList, itemId, getStackAmount(selectedItem));
+    if (!removed) {
+      sendRefineryResult(socket, { requestId, ok: false, error: 'selected_item_not_found', itemId, source });
+      return;
+    }
+
+    const existingInStorage = storage.find((storageItem) => (
+      storageItem?.isRefined &&
+      String(storageItem?.oreType || '') === oreType &&
+      Number(storageItem?.qlBand) === refinedQL
+    ));
+
+    if (existingInStorage) {
+      existingInStorage.amount = Number(getStackAmount(existingInStorage) || 0) + refinedAmount;
+      const existingWeight = parseFloat(existingInStorage?.weight) || 0;
+      existingInStorage.weight = Number((existingWeight + itemWeight).toFixed(1));
+    } else {
+      storage.push(buildRefinedResourceItem(selectedItem, { oreType, refinedAmount, refinedQL, craftedAt: Date.now() }));
+    }
+
+    try {
+      await saveInventoryStateServer(userId, dockedStarport, storage);
+      const { error: cargoError } = await supabase
+        .from('ship_states_v2')
+        .update({ cargo, updated_at: nowIso() })
+        .eq('player_id', userId);
+      if (cargoError) throw cargoError;
+    } catch (persistError) {
+      console.warn('[Refinery] persist failed:', persistError?.message || persistError);
+      sendRefineryResult(socket, { requestId, ok: false, error: 'persist_failed' });
+      return;
+    }
+
+    sendRefineryResult(socket, {
+      requestId,
+      ok: true,
+      action: 'REFINE_ORE',
+      starport_id: dockedStarport,
+      source,
+      sourceItemId: itemId,
+      oreType,
+      refinedName,
+      refinedQL,
+      refinedAmount,
+      cargo,
+      storage
+    });
+  } catch (e) {
+    console.warn('[Refinery] failed:', e?.message || e);
+    sendRefineryResult(socket, { requestId: data?.requestId || null, ok: false, error: e?.message || 'refinery_failed' });
   }
 }
 
@@ -10037,6 +10210,8 @@ wss.on("connection", (socket) => {
         return await handleCommanderRepairShip(socket, data);
       case "FABRICATE_BLUEPRINT_REQUEST":
         return await handleFabricateBlueprint(socket, data);
+      case "REFINE_ORE_REQUEST":
+        return await handleRefineOre(socket, data);
       case "MARKET_FETCH_DATA":
         return await handleMarketFetchData(socket, data);
       case "MARKET_SEED_VENDOR":

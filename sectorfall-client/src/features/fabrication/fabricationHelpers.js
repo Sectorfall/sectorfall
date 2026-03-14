@@ -57,10 +57,14 @@ export function getFabricationSuccessMessage(result, blueprintData, avgQL) {
 export function getRefineryErrorMessage(code) {
     const errorMap = {
         not_docked: 'STARPORT REFINERY UNAVAILABLE',
+        wrong_starport: 'REFINING FAILED: Wrong starport context.',
+        missing_item: 'SELECTED ORE STACK NOT FOUND',
         selected_item_not_found: 'SELECTED ORE STACK NOT FOUND',
-        ship_item_not_found: 'SELECTED SHIP ORE STACK NOT FOUND',
-        storage_item_not_found: 'SELECTED STORAGE ORE STACK NOT FOUND',
-        storage_capacity: 'STARPORT STORAGE BAY AT CAPACITY'
+        invalid_resource: 'SELECTED ORE STACK NOT FOUND',
+        storage_capacity: 'STARPORT STORAGE BAY AT CAPACITY',
+        invalid_refine_amount: 'REFINING FAILED: Ore stack too small.',
+        persist_failed: 'REFINING FAILED: Persistence layer rejected the update.',
+        timeout: 'REFINING FAILED: Backend timeout.'
     };
 
     return errorMap[code] || 'REFINING FAILED';
