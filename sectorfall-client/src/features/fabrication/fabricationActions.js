@@ -34,28 +34,16 @@ export function buildFabricationStateUpdate({ prev, result, starportId, hydrateI
 }
 
 
-function resolveRefineryInstanceId(entry) {
-    if (!entry || typeof entry !== 'object') return null;
-
-    return entry.id
-        || entry.instance_id
-        || entry.instanceId
-        || entry.item_instance_id
-        || entry.itemInstanceId
-        || null;
-}
-
 export function buildRefineryRequestPayload({ starportId, item, source, filteredIndex = -1, inventory = [], stationStorage = [] }) {
     const sourceKey = String(source || '').trim().toLowerCase() === 'ship' ? 'ship' : 'storage';
     const sourceItems = sourceKey === 'ship'
         ? (Array.isArray(inventory) ? inventory.filter(i => i?.type === 'resource' && !i?.isRefined) : [])
         : (Array.isArray(stationStorage) ? stationStorage.filter(i => i?.type === 'resource' && !i?.isRefined) : []);
     const selectedItem = sourceItems[filteredIndex] || item || null;
-    const selectedItemId = resolveRefineryInstanceId(selectedItem) || resolveRefineryInstanceId(item);
 
     return {
         starportId,
-        itemId: selectedItemId,
+        itemId: selectedItem?.id || item?.id || null,
         source: sourceKey
     };
 }
