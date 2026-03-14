@@ -4352,6 +4352,11 @@ function buildStoredMarketItem(itemType, quantity = 1) {
   };
 }
 
+async function buildMarketStorageStatePayload(playerId, starportId) {
+  const inventory = await loadInventoryStateServer(playerId, starportId);
+  return Array.isArray(inventory?.items) ? inventory.items : [];
+}
+
 async function loadInventoryStateServer(playerId, starportId) {
   const normalizedStarportId = normalizeStarportId(starportId);
   const { data, error } = await supabase
@@ -5051,15 +5056,6 @@ function sendRefineryResult(socket, payload = {}) {
   }));
 }
 
-function sendCargoTransferResult(socket, payload = {}) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return;
-  socket.send(JSON.stringify({
-    type: "CARGO_TRANSFER_RESULT",
-    serverTime: Date.now(),
-    ...payload
-  }));
-}
-
 function getStackAmount(item) {
   if (!item || typeof item !== 'object') return 0;
   if (Number.isFinite(item.amount)) return Number(item.amount);
@@ -5210,75 +5206,6 @@ function removeAmountFromItemById(list, itemId, amount) {
   if (nextQty > 0) list[idx] = setStackAmount(item, nextQty);
   else list.splice(idx, 1);
   return true;
-}
-
-const STACKABLE_TRANSFER_TYPES = new Set(['resource', 'material', 'blueprint', 'bio-material', 'ore']);
-
-function canItemsStackForTransferServer(a, b) {
-  if (!a || !b) return false;
-  if (a.type !== b.type) return false;
-  if (!STACKABLE_TRANSFER_TYPES.has(a.type)) return false;
-
-  if (a.type === 'blueprint') {
-    return a.blueprintId === b.blueprintId && a.rarity === b.rarity;
-  }
-
-  const sameIdentity =
-    (a.id && b.id && a.id === b.id) ||
-    (a.materialKey && b.materialKey && a.materialKey === b.materialKey) ||
-    (a.name && b.name && a.name === b.name);
-
-  return sameIdentity && a.qlBand === b.qlBand && Boolean(a.isRefined) === Boolean(b.isRefined);
-}
-
-function mergeTransferredItemIntoListServer(items, rawItem) {
-  const normalizedItem = normalizeStableItemIdentity(rawItem).item;
-  const nextItems = Array.isArray(items) ? items : [];
-  const existingIndex = nextItems.findIndex((existing) => canItemsStackForTransferServer(existing, normalizedItem));
-  if (existingIndex === -1) {
-    nextItems.push({ ...normalizedItem });
-    return nextItems;
-  }
-
-  const existing = { ...nextItems[existingIndex] };
-  existing.amount = Number(existing.amount || 1) + Number(normalizedItem.amount || 1);
-  if (existing.weight != null || normalizedItem.weight != null) {
-    existing.weight = Number((parseFloat(existing.weight) || 0) + (parseFloat(normalizedItem.weight) || 0)).toFixed(1);
-  }
-  if (existing.volume != null || normalizedItem.volume != null) {
-    existing.volume = Number((parseFloat(existing.volume) || 0) + (parseFloat(normalizedItem.volume) || 0)).toFixed(1);
-  }
-  nextItems[existingIndex] = existing;
-  return nextItems;
-}
-
-function removeItemStackById(list, itemId) {
-  if (!Array.isArray(list)) return null;
-  const idx = list.findIndex((entry) => String(entry?.id || '') === String(itemId || ''));
-  if (idx < 0) return null;
-  const [removed] = list.splice(idx, 1);
-  return removed ? { ...removed } : null;
-}
-
-async function persistDockedCargoAndStorage(userId, cargo, storage, starportId, player = null) {
-  await saveInventoryStateServer(userId, starportId, storage);
-  const shipState = await loadShipState(userId);
-  const nextTelemetry = shipState?.telemetry && typeof shipState.telemetry === 'object'
-    ? { ...shipState.telemetry, cargo, isDocked: true, docked: true, system_id: shipState?.system_id || player?.system_id || null }
-    : shipState?.telemetry;
-  const { error: cargoError } = await supabase
-    .from('ship_states_v2')
-    .update({ cargo, telemetry: nextTelemetry, updated_at: nowIso() })
-    .eq('player_id', userId);
-  if (cargoError) throw cargoError;
-
-  if (player) {
-    player.cargo = cloneItems(cargo);
-    player.inventory = cloneItems(cargo);
-    player.telemetry = nextTelemetry && typeof nextTelemetry === 'object'
-      ? { ...nextTelemetry }
-      : player.telemetry;
-  }
 }
 
 function titleCaseWord(value) {
@@ -5622,76 +5549,6 @@ async function handleFabricateBlueprint(socket, data) {
 }
 
 
-async function handleCargoTransferRequest(socket, data) {
-  const player = players.get(socket);
-  const userId = String(data?.userId || player?.userId || '').trim();
-  const requestId = data?.requestId || null;
-  if (!player || !userId || player.userId !== userId) return;
-
-  try {
-    const dockedStarport = await getDockedMarketStarport(player, userId);
-    const requestedStarport = normalizeStarportId(data?.starport_id);
-    if (!dockedStarport) {
-      sendCargoTransferResult(socket, { requestId, ok: false, error: 'not_docked' });
-      return;
-    }
-    if (requestedStarport && requestedStarport !== dockedStarport) {
-      sendCargoTransferResult(socket, { requestId, ok: false, error: 'wrong_starport', expectedStarportId: dockedStarport, gotStarportId: requestedStarport });
-      return;
-    }
-
-    const itemId = String(data?.itemId || data?.item_id || '').trim();
-    const rawDirection = String(data?.direction || '').trim().toLowerCase();
-    const direction = rawDirection === 'to_ship' ? 'to_ship' : (rawDirection === 'to_storage' ? 'to_storage' : null);
-    if (!itemId) {
-      sendCargoTransferResult(socket, { requestId, ok: false, error: 'missing_item' });
-      return;
-    }
-    if (!direction) {
-      sendCargoTransferResult(socket, { requestId, ok: false, error: 'invalid_direction' });
-      return;
-    }
-
-    const shipState = await loadShipState(userId);
-    const cargo = cloneItems(Array.isArray(shipState?.cargo) ? shipState.cargo : []);
-    const storageState = await loadInventoryStateServer(userId, dockedStarport);
-    const storage = cloneItems(storageState.items || []);
-
-    const sourceList = direction === 'to_storage' ? cargo : storage;
-    const targetList = direction === 'to_storage' ? storage : cargo;
-    const movedItem = removeItemStackById(sourceList, itemId);
-    if (!movedItem) {
-      sendCargoTransferResult(socket, { requestId, ok: false, error: 'item_not_found', itemId, direction });
-      return;
-    }
-
-    mergeTransferredItemIntoListServer(targetList, movedItem);
-
-    try {
-      await persistDockedCargoAndStorage(userId, cargo, storage, dockedStarport, player);
-    } catch (persistError) {
-      console.warn('[CargoTransfer] persist failed:', persistError?.message || persistError);
-      sendCargoTransferResult(socket, { requestId, ok: false, error: 'persist_failed' });
-      return;
-    }
-
-    sendCargoTransferResult(socket, {
-      requestId,
-      ok: true,
-      action: 'CARGO_TRANSFER',
-      direction,
-      starport_id: dockedStarport,
-      movedItemId: itemId,
-      cargo,
-      storage
-    });
-  } catch (e) {
-    console.warn('[CargoTransfer] failed:', e?.message || e);
-    sendCargoTransferResult(socket, { requestId: data?.requestId || null, ok: false, error: e?.message || 'cargo_transfer_failed' });
-  }
-}
-
-
 async function handleRefineOre(socket, data) {
   const player = players.get(socket);
   const userId = String(data?.userId || player?.userId || '').trim();
@@ -5925,12 +5782,14 @@ async function handleMarketCreateSellOrder(socket, data) {
 
     const matchResult = await attemptMatchOpenOrders(dockedStarport, itemType);
     const commanderState = await ensureCommanderWallet(userId);
+    const storageItems = await buildMarketStorageStatePayload(userId, dockedStarport);
     sendMarketActionResult(socket, {
       requestId,
       ok: true,
       action: "MARKET_CREATE_SELL_ORDER",
       listing,
       matched: matchResult.matched,
+      storageItems,
       commanderState: { credits: Number(commanderState?.credits || 0) }
     });
   } catch (e) {
@@ -6134,6 +5993,7 @@ async function handleMarketBuyListing(socket, data) {
       total: totalPrice
     });
 
+    const storageItems = await buildMarketStorageStatePayload(userId, dockedStarport);
     sendMarketActionResult(socket, {
       requestId,
       ok: true,
@@ -6141,6 +6001,7 @@ async function handleMarketBuyListing(socket, data) {
       success: true,
       listingId,
       quantity: tradeQty,
+      storageItems,
       commanderState: { credits: walletResult.credits }
     });
   } catch (e) {
@@ -6191,7 +6052,8 @@ async function handleMarketCancelSellOrder(socket, data) {
       .eq("listing_id", listingId);
     if (updateErr) throw updateErr;
 
-    sendMarketActionResult(socket, { requestId, ok: true, action: "MARKET_CANCEL_SELL_ORDER", listingId });
+    const storageItems = await buildMarketStorageStatePayload(userId, dockedStarport);
+    sendMarketActionResult(socket, { requestId, ok: true, action: "MARKET_CANCEL_SELL_ORDER", listingId, storageItems });
   } catch (e) {
     sendMarketActionResult(socket, { requestId, ok: false, error: e?.message || "cancel_sell_failed" });
   }
@@ -10666,8 +10528,6 @@ wss.on("connection", (socket) => {
         return await handleFabricateBlueprint(socket, data);
       case "REFINE_ORE_REQUEST":
         return await handleRefineOre(socket, data);
-      case "CARGO_TRANSFER_REQUEST":
-        return await handleCargoTransferRequest(socket, data);
       case "MARKET_FETCH_DATA":
         return await handleMarketFetchData(socket, data);
       case "MARKET_SEED_VENDOR":
