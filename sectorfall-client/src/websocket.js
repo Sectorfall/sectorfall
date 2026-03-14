@@ -2110,11 +2110,24 @@ if (fireSolution && typeof fireSolution === "object") {
   }
 
   requestRefineOre({ starportId, itemId, source } = {}) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId || !itemId) return Promise.resolve(null);
+    const socketState = this.socket?.readyState;
+    const socketOpen = socketState === WebSocket.OPEN;
+    if (!this.socket || !socketOpen || !this.userId || !starportId || !itemId) {
+      console.warn('[REFINERY WS] request blocked before send', {
+        hasSocket: !!this.socket,
+        socketState,
+        socketOpen,
+        hasUserId: !!this.userId,
+        starportId: starportId || null,
+        itemId: itemId || null,
+        source: source || null
+      });
+      return Promise.resolve(null);
+    }
     const requestId = `refine-${Date.now()}-${++this.seq}`;
     return new Promise((resolve) => {
       this._pendingRefineryRequests.set(requestId, { resolve, createdAt: Date.now(), itemId, source });
-      this.socket.send(JSON.stringify({
+      const payload = {
         type: 'REFINE_ORE_REQUEST',
         requestId,
         userId: this.userId,
@@ -2122,7 +2135,9 @@ if (fireSolution && typeof fireSolution === "object") {
         itemId,
         source,
         clientTime: Date.now()
-      }));
+      };
+      console.log('[REFINERY WS] sending request', payload);
+      this.socket.send(JSON.stringify(payload));
       setTimeout(() => {
         const pending = this._pendingRefineryRequests.get(requestId);
         if (pending) {
@@ -2395,6 +2410,7 @@ handleMarketActionResult(data) {
 
   handleRefineryResult(data) {
     try {
+      console.log('[REFINERY WS] result received', data);
       const requestId = data?.requestId;
       if (requestId) {
         const pending = this._pendingRefineryRequests.get(requestId);
