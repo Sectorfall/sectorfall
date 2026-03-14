@@ -894,11 +894,16 @@ async saveInventoryState(playerId, starportId, items, context = "unknown") {
   .map(({ itemKey, quality }) => createItemInstance(itemKey, { id: uuid(), quality }))
   .filter(Boolean);
 
+      const existingInventoryState = await this.getInventoryState(playerId, normalizedStarportId);
+      const existingStorageItems = Array.isArray(existingInventoryState?.items)
+        ? existingInventoryState.items
+        : [];
+      const mergedStorageItems = [...existingStorageItems, ...starterEquipment];
 
       await this.saveInventoryState(
         playerId,
         normalizedStarportId,
-        starterEquipment,
+        mergedStorageItems,
         "grantStarterKit"
       );
 
