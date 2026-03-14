@@ -18,7 +18,7 @@ import { initMultiplayer, disconnectMultiplayer, multiplayerEnabled } from './mu
 import { backendSocket } from './websocket.js';
 import { uuid } from './utils.js';
 import MarketSystem from './marketSystem.js';
-import { ShipStatistics } from './components/ShipStatistics.js';
+import { ShipStatistics, aggregateShipStats } from './components/ShipStatistics.js';
 import { SocialMenu } from './components/SocialMenu.js';
 import PortraitPicker from './components/PortraitPicker.js';
 import { useDraggable } from './hooks/useDraggable.js';
@@ -6318,8 +6318,10 @@ const StationInterior = ({
         maxShields: numOr(gameState.maxShields, numOr(selectedShip.maxShields, numOr(selectedShip.shields, 0))),
         energy: numOr(gameState.energy, numOr(selectedShip.energy, 0)),
         maxEnergy: numOr(gameState.maxEnergy, numOr(selectedShip.maxEnergy, numOr(selectedShip.energy, 0))),
-        armor: numOr(gameState.armor, 0),
-        resistances: (gameState.resistances && typeof gameState.resistances === 'object') ? gameState.resistances : {},
+        armor: numOr(gameState.armor, numOr(selectedShip.armor, 0)),
+        resistances: (gameState.resistances && typeof gameState.resistances === 'object')
+            ? { ...gameState.resistances }
+            : ((selectedShip.resistances && typeof selectedShip.resistances === 'object') ? { ...selectedShip.resistances } : {}),
         combat_stats: (gameState.combatStats && typeof gameState.combatStats === 'object') ? gameState.combatStats : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combat_stats && typeof selectedShip.combat_stats === 'object') ? selectedShip.combat_stats : null)),
         combatStats: (gameState.combatStats && typeof gameState.combatStats === 'object') ? gameState.combatStats : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : ((selectedShip.combatStats && typeof selectedShip.combatStats === 'object') ? selectedShip.combatStats : null)),
         fittings: gameState.fittings || selectedShip.fittings || {}
@@ -6330,13 +6332,14 @@ const StationInterior = ({
             selectedShip.combat_stats?.shipId,
             selectedShip.type
         ) || selectedShip.type,
-        armor: 0,
-        resistances: {},
-        combat_stats: null,
-        combatStats: null,
-        kineticRes: 0,
-        thermalRes: 0,
-        blastRes: 0
+        armor: numOr(selectedShip.armor, 0),
+        resistances: (selectedShip.resistances && typeof selectedShip.resistances === 'object') ? { ...selectedShip.resistances } : {},
+        combat_stats: (selectedShip.combat_stats && typeof selectedShip.combat_stats === 'object') ? selectedShip.combat_stats : null,
+        combatStats: (selectedShip.combatStats && typeof selectedShip.combatStats === 'object') ? selectedShip.combatStats : null,
+        kineticRes: numOr(selectedShip.kineticRes, 0),
+        thermalRes: numOr(selectedShip.thermalRes, 0),
+        blastRes: numOr(selectedShip.blastRes, 0),
+        fittings: selectedShip.fittings || {}
     }) : null;
     
     useEffect(() => {
@@ -6969,6 +6972,26 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
     const hasAnyModules = Object.values(gameState.fittings).some(f => f !== null);
     
     const activeShip = gameState.ownedShips.find(s => s.id === gameState.activeShipId);
+    const activeDisplayShip = activeShip ? {
+        ...activeShip,
+        hp: numOr(gameState.hp, numOr(activeShip?.hp, 0)),
+        maxHp: numOr(gameState.maxHp, numOr(activeShip?.maxHp, 0)),
+        shields: numOr(gameState.shields, numOr(activeShip?.shields, 0)),
+        maxShields: numOr(gameState.maxShields, numOr(activeShip?.maxShields, 0)),
+        energy: numOr(gameState.energy, numOr(activeShip?.energy, 0)),
+        maxEnergy: numOr(gameState.maxEnergy, numOr(activeShip?.maxEnergy, 0)),
+        armor: numOr(gameState.armor, numOr(activeShip?.armor, 0)),
+        resistances: (gameState.resistances && typeof gameState.resistances === 'object')
+            ? { ...gameState.resistances }
+            : ((activeShip?.resistances && typeof activeShip.resistances === 'object') ? { ...activeShip.resistances } : {}),
+        combat_stats: (gameState.combatStats && typeof gameState.combatStats === 'object')
+            ? gameState.combatStats
+            : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : (activeShip?.combat_stats || null)),
+        combatStats: (gameState.combatStats && typeof gameState.combatStats === 'object')
+            ? gameState.combatStats
+            : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : (activeShip?.combatStats || null)),
+        fittings: gameState.fittings || activeShip?.fittings || {}
+    } : null;
     const activeShipType = resolveShipId(gameState.combatStats?.shipId || activeShip?.type || gameState.shipClass || gameState.activeShipId) || activeShip?.type || gameState.shipClass || gameState.activeShipId;
     const shipRegistryKey = resolveShipRegistryKey(activeShipType) || activeShipType;
     const shipConfig = SHIP_REGISTRY[shipRegistryKey] || SHIP_REGISTRY[activeShipType];
@@ -7157,55 +7180,48 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
                             // Right Column: Tactical Data
                             React.createElement('div', { style: { flex: 1, borderLeft: '1px solid #333', paddingLeft: '15px' } },
                                 (() => {
-                                    // Use simple aggregation for the summary view
-                                    const dps = Object.values(gameState.fittings)
-                                        .filter(f => f && f.type === 'weapon')
-                                        .reduce((sum, w) => {
-                                            const effective = w.final_stats ? w : hydrateItem(w);
-                                            const fs = effective.final_stats;
-                                            const nameLower = (w.name || '').toLowerCase();
-                                            
-                                            if (nameLower.includes('flux')) {
-                                                return sum + (fs.damagePerTick * fs.fireRate);
-                                            } else if (nameLower.includes('pulse')) {
-                                                const cycleTime = (fs.magazine / fs.fireRate) + fs.reload;
-                                                return sum + ((fs.magazine * fs.damage) / cycleTime);
-                                            } else if (nameLower.includes('seeker') || nameLower.includes('missile')) {
-                                                return sum + (fs.damage / fs.reload);
-                                            }
-                                            return sum + ((fs.damage || 0) / (fs.fireRate || 1));
-                                        }, 0);
-                                    
-                                    const miningRate = Object.values(gameState.fittings)
-                                        .filter(f => f && f.type === 'mining')
-                                        .reduce((sum, m) => {
-                                            const effective = m.final_stats ? m : hydrateItem(m);
-                                            const fs = effective.final_stats;
-                                            return sum + (fs.baseExtraction * (60 / fs.fireRate));
-                                        }, 0);
-
-                                    const avgRes = (gameState.kineticRes + gameState.thermalRes + gameState.blastRes) / 3;
-                                    const ehp = (gameState.hp + gameState.shields) / Math.max(0.01, 1 - avgRes);
-                                    
-                                    const thrusterBoost = Object.values(gameState.fittings)
-                                        .filter(f => f && f.type === 'thruster')
-                                        .reduce((sum, t) => {
-                                            const effective = t.final_stats ? t : hydrateItem(t);
-                                            return sum + effective.final_stats.speedBoost;
-                                        }, 0);
+                                    const resolvedDisplayStats = aggregateShipStats({
+                                        ...(activeDisplayShip || {}),
+                                        hp: numOr(gameState.hp, numOr(activeShip?.hp, 0)),
+                                        maxHp: numOr(gameState.maxHp, numOr(activeShip?.maxHp, 0)),
+                                        shields: numOr(gameState.shields, numOr(activeShip?.shields, 0)),
+                                        maxShields: numOr(gameState.maxShields, numOr(activeShip?.maxShields, 0)),
+                                        energy: numOr(gameState.energy, numOr(activeShip?.energy, 0)),
+                                        maxEnergy: numOr(gameState.maxEnergy, numOr(activeShip?.maxEnergy, 0)),
+                                        armor: numOr(gameState.armor, numOr(activeShip?.armor, 0)),
+                                        resistances: (gameState.resistances && typeof gameState.resistances === 'object')
+                                            ? { ...gameState.resistances }
+                                            : ((activeShip?.resistances && typeof activeShip.resistances === 'object') ? { ...activeShip.resistances } : {}),
+                                        combat_stats: (gameState.combatStats && typeof gameState.combatStats === 'object')
+                                            ? gameState.combatStats
+                                            : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : (activeShip?.combat_stats || null)),
+                                        combatStats: (gameState.combatStats && typeof gameState.combatStats === 'object')
+                                            ? gameState.combatStats
+                                            : ((gameState.combat_stats && typeof gameState.combat_stats === 'object') ? gameState.combat_stats : (activeShip?.combatStats || null)),
+                                        fittings: gameState.fittings || activeShip?.fittings || {}
+                                    }, gameState.fittings || activeDisplayShip?.fittings || {});
 
                                     const stats = [
-                                        { label: 'DPS', value: `${dps.toFixed(1)} u/s`, color: '#ffcc00' },
-                                        { label: 'EHP', value: `${ehp.toFixed(1)} u`, color: '#ffffff' },
-                                        { label: 'SIGNATURE', value: `${(gameState.sigRadius || 30).toFixed(1)}m`, color: '#ff4444' }
+                                        { label: 'DPS', value: `${resolvedDisplayStats?.offense?.totalSustainedDps?.toFixed(1) || '0.0'} u/s`, color: '#ffcc00' },
+                                        { label: 'EHP', value: `${resolvedDisplayStats?.hull?.ehp?.toFixed(1) || '0.0'} u`, color: '#ffffff' },
+                                        { label: 'SIGNATURE', value: `${(resolvedDisplayStats?.electronics?.sigRadius || gameState.sigRadius || 30).toFixed(1)}m`, color: '#ff4444' }
                                     ];
 
-                                    if (miningRate > 0) {
-                                        stats.push({ label: 'MINING', value: `${miningRate.toFixed(1)} ore/min`, color: '#00ccff' });
+                                    if ((resolvedDisplayStats?.industrial?.totalExtractionRate || 0) > 0 || (resolvedDisplayStats?.swarm?.totalDroneMining || 0) > 0) {
+                                        stats.push({
+                                            label: 'MINING',
+                                            value: `${((resolvedDisplayStats?.industrial?.totalExtractionRate || 0) + (resolvedDisplayStats?.swarm?.totalDroneMining || 0)).toFixed(1)} ore/min`,
+                                            color: '#00ccff'
+                                        });
                                     }
 
-                                    if (thrusterBoost > 0) {
-                                        stats.push({ label: 'BOOST', value: `+${thrusterBoost}% Vel`, color: '#00ff00' });
+                                    const speedBase = Number(resolvedDisplayStats?.flight?.maxSpeed || 0);
+                                    const speedWithoutThrusterBonus = Number(gameState.maxSpeed || activeShip?.maxSpeed || activeShip?.baseSpeed || speedBase || 0);
+                                    const thrusterBoostPct = speedWithoutThrusterBonus > 0
+                                        ? Math.max(0, ((speedBase - speedWithoutThrusterBonus) / speedWithoutThrusterBonus) * 100)
+                                        : 0;
+                                    if (thrusterBoostPct > 0.05) {
+                                        stats.push({ label: 'BOOST', value: `+${thrusterBoostPct.toFixed(1)}% Vel`, color: '#00ff00' });
                                     }
                                     
                                     return stats.map((stat, i) => 
@@ -7220,7 +7236,7 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
                     )
                 ) : 
                 // Full Stats View
-                React.createElement(ShipStatistics, { ship: activeShip, fittings: gameState.fittings })
+                React.createElement(ShipStatistics, { ship: activeDisplayShip, fittings: gameState.fittings || activeDisplayShip?.fittings || {} })
             ),
 
             // Toggle Button

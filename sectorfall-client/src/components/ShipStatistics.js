@@ -202,25 +202,50 @@ export const aggregateShipStats = (ship, fittings) => {
     }
 
     // EHP and Resists with Catalyst Modifiers applied
-    const authoritativeRes = (ship.resistances && typeof ship.resistances === 'object')
-        ? ship.resistances
-        : ((combatStats.resistances && typeof combatStats.resistances === 'object') ? combatStats.resistances : {});
-    const baseShipHP = typeof ship.maxHp === 'number'
-        ? ship.maxHp
-        : getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.hp === 'number' ? ship.hp : 0);
+    const authoritativeRes = (combatStats.resistances && typeof combatStats.resistances === 'object')
+        ? combatStats.resistances
+        : ((ship.resistances && typeof ship.resistances === 'object') ? ship.resistances : {});
+    const baseShipHP = getAuthoritativeNumber(
+        combatStats,
+        ['maxHp', 'hull_base'],
+        typeof ship.maxHp === 'number' ? ship.maxHp : (typeof ship.hp === 'number' ? ship.hp : 0)
+    );
     const finalHP = baseShipHP * (1 + hpBonus);
     const currentHull = typeof ship.hp === 'number'
         ? ship.hp
         : getAuthoritativeNumber(combatStats, ['hp', 'hull'], finalHP);
-    const shieldCapacity = typeof ship.maxShields === 'number'
-        ? ship.maxShields
-        : getAuthoritativeNumber(combatStats, ['maxShields', 'shieldCapacity'], typeof ship.shields === 'number' ? ship.shields : 0);
-    const finalKinRes = (typeof ship.kineticRes === 'number' ? ship.kineticRes : Number(authoritativeRes.kinetic ?? 0)) + kinResBonus;
-    const finalThermRes = (typeof ship.thermalRes === 'number' ? ship.thermalRes : Number(authoritativeRes.thermal ?? 0)) + thermResBonus;
-    const finalBlastRes = (typeof ship.blastRes === 'number' ? ship.blastRes : Number(authoritativeRes.blast ?? 0)) + blastResBonus;
+    const moduleShieldTotals = Object.values(shipFittings).reduce((sum, module) => {
+        if (!module || module.type !== 'shield') return sum;
+        const shieldStats = getShieldModuleStats(module);
+        const moduleCapacity = Number(
+            shieldStats?.shieldHp
+            ?? shieldStats?.capacity
+            ?? module?.final_stats?.shieldHp
+            ?? module?.final_stats?.capacity
+            ?? module?.module_stats?.shieldHp
+            ?? module?.module_stats?.capacity
+            ?? module?.shieldHp
+            ?? module?.capacity
+            ?? 0
+        );
+        return sum + (Number.isFinite(moduleCapacity) ? moduleCapacity : 0);
+    }, 0);
+    const shieldCapacity = getAuthoritativeNumber(
+        combatStats,
+        ['maxShields', 'shieldCapacity', 'shield_capacity'],
+        typeof ship.maxShields === 'number'
+            ? ship.maxShields
+            : (moduleShieldTotals > 0 ? moduleShieldTotals : (typeof ship.shields === 'number' ? ship.shields : 0))
+    );
+    const currentShields = typeof ship.shields === 'number'
+        ? ship.shields
+        : getAuthoritativeNumber(combatStats, ['shields', 'shield'], shieldCapacity);
+    const finalKinRes = getAuthoritativeNumber(combatStats, ['kineticRes'], (typeof ship.kineticRes === 'number' ? ship.kineticRes : Number(authoritativeRes.kinetic ?? 0))) + kinResBonus;
+    const finalThermRes = getAuthoritativeNumber(combatStats, ['thermalRes'], (typeof ship.thermalRes === 'number' ? ship.thermalRes : Number(authoritativeRes.thermal ?? 0))) + thermResBonus;
+    const finalBlastRes = getAuthoritativeNumber(combatStats, ['blastRes'], (typeof ship.blastRes === 'number' ? ship.blastRes : Number(authoritativeRes.blast ?? 0))) + blastResBonus;
 
     const avgRes = (finalKinRes + finalThermRes + finalBlastRes) / 3;
-    const ehp = (finalHP + shieldCapacity) / Math.max(0.01, 1 - avgRes);
+    const ehp = (currentHull + currentShields) / Math.max(0.01, 1 - avgRes);
 
     // Shield restoration stats (aggregated from fittings)
     const baseShieldRegen = Object.values(shipFittings).reduce((sum, module) => {
@@ -258,7 +283,7 @@ export const aggregateShipStats = (ship, fittings) => {
         shipConfig,
         hull: {
             current: currentHull,
-            max: getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.maxHp === 'number' ? ship.maxHp : 0) * (1 + hpBonus),
+            max: finalHP,
             armor: ((typeof ship.armor === 'number' ? ship.armor : getAuthoritativeNumber(combatStats, ['armor'], 0)) * 100),
             ehp
         },
