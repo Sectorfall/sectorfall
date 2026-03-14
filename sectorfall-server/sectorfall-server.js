@@ -2977,6 +2977,24 @@ async function loadShipState(userId) {
     console.log("[Backend] No ship_states_v2 found for", userId, error?.message || error);
     return null;
   }
+
+  const normalizedCargo = normalizeStableItemList(Array.isArray(state?.cargo) ? state.cargo : []);
+  if (normalizedCargo.changed) {
+    const nextTelemetry = state?.telemetry && typeof state.telemetry === 'object'
+      ? { ...state.telemetry, cargo: normalizedCargo.items }
+      : state?.telemetry;
+    const { error: persistError } = await supabase
+      .from("ship_states_v2")
+      .update({ cargo: normalizedCargo.items, telemetry: nextTelemetry, updated_at: nowIso() })
+      .eq("player_id", userId);
+    if (persistError) {
+      console.warn('[Backend] Failed to normalize cargo item ids:', userId, persistError.message);
+    } else {
+      state.cargo = normalizedCargo.items;
+      if (nextTelemetry && typeof nextTelemetry === 'object') state.telemetry = nextTelemetry;
+    }
+  }
+
   return state;
 }
 
@@ -3315,7 +3333,19 @@ function getModuleContentByAnyId(rawId) {
   if (!needle && !looseNeedle) return null;
   for (const mod of gameContentCache.modulesById.values()) {
     if (!mod) continue;
-    const ids = [mod.module_id, mod.display_name]
+    const catalogId = buildCatalogItemId(mod);
+    const ids = [
+      mod.module_id,
+      mod.display_name,
+      catalogId,
+      catalogId ? catalogId.replace(/-/g, ' ') : null,
+      mod.module_type === 'shield' ? `${sizeToWord(mod.size)} ${rarityToWord(mod.rarity)} Shield Array` : null,
+      mod.module_type === 'thruster' ? `${sizeToWord(mod.size)} ${rarityToWord(mod.rarity)} Ion Thruster` : null,
+      mod.module_type === 'mining' ? `${sizeToWord(mod.size)} ${rarityToWord(mod.rarity)} Mining Laser` : null,
+      mod.module_type === 'weapon' && String(mod.subtype || '').trim().toLowerCase() === 'flux_laser' ? `${sizeToWord(mod.size)} ${rarityToWord(mod.rarity)} Flux Laser` : null,
+      mod.module_type === 'weapon' && String(mod.subtype || '').trim().toLowerCase() === 'pulse_cannon' ? `${sizeToWord(mod.size)} ${rarityToWord(mod.rarity)} Pulse Cannon` : null,
+      mod.module_type === 'weapon' && String(mod.subtype || '').trim().toLowerCase() === 'seeker_pod' ? `${sizeToWord(mod.size)} ${rarityToWord(mod.rarity)} Seeker Pod` : null
+    ]
       .map((value) => String(value || '').trim().toLowerCase())
       .filter(Boolean);
     if (needle && ids.includes(needle)) return mod;
@@ -4231,6 +4261,41 @@ function cloneItems(items) {
   return Array.isArray(items) ? items.map((it) => (it && typeof it === "object" ? { ...it } : it)) : [];
 }
 
+function normalizeStableItemIdentity(item) {
+  if (!item || typeof item !== "object") return { item, changed: false };
+  const nextItem = { ...item };
+  const fallbackId = String(nextItem.id || nextItem.instance_id || nextItem.instanceId || nextItem.item_instance_id || nextItem.itemInstanceId || '').trim();
+  const stableId = fallbackId || crypto.randomUUID();
+  let changed = false;
+
+  if (String(nextItem.id || '').trim() !== stableId) {
+    nextItem.id = stableId;
+    changed = true;
+  }
+  if (String(nextItem.instance_id || '').trim() !== stableId) {
+    nextItem.instance_id = stableId;
+    changed = true;
+  }
+  if (String(nextItem.instanceId || '').trim() !== stableId) {
+    nextItem.instanceId = stableId;
+    changed = true;
+  }
+
+  return { item: nextItem, changed };
+}
+
+function normalizeStableItemList(items) {
+  if (!Array.isArray(items)) return { items: [], changed: false };
+  let changed = false;
+  const normalized = items.map((entry) => {
+    if (!entry || typeof entry !== "object") return entry;
+    const result = normalizeStableItemIdentity(entry);
+    if (result.changed) changed = true;
+    return result.item;
+  });
+  return { items: normalized, changed };
+}
+
 function findMarketItemIndex(list, itemType) {
   const needle = String(itemType || "").trim().toLowerCase();
   return Array.isArray(list) ? list.findIndex((i) => {
@@ -4308,19 +4373,26 @@ async function loadInventoryStateServer(playerId, starportId) {
     .eq("starport_id", normalizedStarportId)
     .maybeSingle();
   if (error) throw error;
+
+  const normalizedItems = normalizeStableItemList(Array.isArray(data?.items) ? data.items : []);
+  if (normalizedItems.changed) {
+    await saveInventoryStateServer(playerId, normalizedStarportId, normalizedItems.items);
+  }
+
   return {
     player_id: playerId,
     starport_id: normalizedStarportId,
-    items: Array.isArray(data?.items) ? data.items : []
+    items: normalizedItems.items
   };
 }
 
 async function saveInventoryStateServer(playerId, starportId, items = []) {
   const normalizedStarportId = normalizeStarportId(starportId);
+  const normalizedItems = normalizeStableItemList(cloneItems(items));
   const payload = {
     player_id: playerId,
     starport_id: normalizedStarportId,
-    items: cloneItems(items)
+    items: normalizedItems.items
   };
   const { data, error } = await supabase
     .from("inventory_states")
@@ -5443,9 +5515,6 @@ async function handleFabricateBlueprint(socket, data) {
         .from('hangar_states')
         .upsert(hangarPayload, { onConflict: 'player_id,starport_id,ship_id' });
       if (commanderError) throw commanderError;
-      ownedShips = (await loadHangarShipsForPlayer(userId))
-        .map(buildOwnedShipEntryFromHangarRow)
-        .filter(Boolean);
     } else {
       const moduleDef = gameContentCache.modulesById.get(blueprint.output_id) || null;
       if (!moduleDef) {
@@ -5454,6 +5523,7 @@ async function handleFabricateBlueprint(socket, data) {
       }
       craftedOutput = buildCraftedModuleItem(blueprint, moduleDef, avgQL, craftedAt);
       storage.push(craftedOutput);
+      await saveInventoryStateServer(userId, dockedStarport, storage);
     }
 
     await saveInventoryStateServer(userId, dockedStarport, storage);
@@ -5475,9 +5545,7 @@ async function handleFabricateBlueprint(socket, data) {
       avgQL: Number(avgQL.toFixed(1)),
       output: craftedOutput,
       cargo,
-      cargoItems: cargo,
       storage,
-      storageItems: storage,
       ownedShips,
       commanderState: commanderState ? { credits: Number(commanderState.credits || 0) } : null
     });
