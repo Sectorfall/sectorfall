@@ -2977,6 +2977,24 @@ async function loadShipState(userId) {
     console.log("[Backend] No ship_states_v2 found for", userId, error?.message || error);
     return null;
   }
+
+  const normalizedCargo = normalizeStableItemList(Array.isArray(state?.cargo) ? state.cargo : []);
+  if (normalizedCargo.changed) {
+    const nextTelemetry = state?.telemetry && typeof state.telemetry === 'object'
+      ? { ...state.telemetry, cargo: normalizedCargo.items }
+      : state?.telemetry;
+    const { error: persistError } = await supabase
+      .from("ship_states_v2")
+      .update({ cargo: normalizedCargo.items, telemetry: nextTelemetry, updated_at: nowIso() })
+      .eq("player_id", userId);
+    if (persistError) {
+      console.warn('[Backend] Failed to normalize cargo item ids:', userId, persistError.message);
+    } else {
+      state.cargo = normalizedCargo.items;
+      if (nextTelemetry && typeof nextTelemetry === 'object') state.telemetry = nextTelemetry;
+    }
+  }
+
   return state;
 }
 
@@ -4231,6 +4249,41 @@ function cloneItems(items) {
   return Array.isArray(items) ? items.map((it) => (it && typeof it === "object" ? { ...it } : it)) : [];
 }
 
+function normalizeStableItemIdentity(item) {
+  if (!item || typeof item !== "object") return { item, changed: false };
+  const nextItem = { ...item };
+  const fallbackId = String(nextItem.id || nextItem.instance_id || nextItem.instanceId || nextItem.item_instance_id || nextItem.itemInstanceId || '').trim();
+  const stableId = fallbackId || crypto.randomUUID();
+  let changed = false;
+
+  if (String(nextItem.id || '').trim() !== stableId) {
+    nextItem.id = stableId;
+    changed = true;
+  }
+  if (String(nextItem.instance_id || '').trim() !== stableId) {
+    nextItem.instance_id = stableId;
+    changed = true;
+  }
+  if (String(nextItem.instanceId || '').trim() !== stableId) {
+    nextItem.instanceId = stableId;
+    changed = true;
+  }
+
+  return { item: nextItem, changed };
+}
+
+function normalizeStableItemList(items) {
+  if (!Array.isArray(items)) return { items: [], changed: false };
+  let changed = false;
+  const normalized = items.map((entry) => {
+    if (!entry || typeof entry !== "object") return entry;
+    const result = normalizeStableItemIdentity(entry);
+    if (result.changed) changed = true;
+    return result.item;
+  });
+  return { items: normalized, changed };
+}
+
 function findMarketItemIndex(list, itemType) {
   const needle = String(itemType || "").trim().toLowerCase();
   return Array.isArray(list) ? list.findIndex((i) => {
@@ -4308,19 +4361,26 @@ async function loadInventoryStateServer(playerId, starportId) {
     .eq("starport_id", normalizedStarportId)
     .maybeSingle();
   if (error) throw error;
+
+  const normalizedItems = normalizeStableItemList(Array.isArray(data?.items) ? data.items : []);
+  if (normalizedItems.changed) {
+    await saveInventoryStateServer(playerId, normalizedStarportId, normalizedItems.items);
+  }
+
   return {
     player_id: playerId,
     starport_id: normalizedStarportId,
-    items: Array.isArray(data?.items) ? data.items : []
+    items: normalizedItems.items
   };
 }
 
 async function saveInventoryStateServer(playerId, starportId, items = []) {
   const normalizedStarportId = normalizeStarportId(starportId);
+  const normalizedItems = normalizeStableItemList(cloneItems(items));
   const payload = {
     player_id: playerId,
     starport_id: normalizedStarportId,
-    items: cloneItems(items)
+    items: normalizedItems.items
   };
   const { data, error } = await supabase
     .from("inventory_states")
@@ -5490,14 +5550,6 @@ async function handleRefineOre(socket, data) {
   const requestId = data?.requestId || null;
   if (!player || !userId || player.userId !== userId) return;
 
-  console.log('[REFINERY] request received', {
-    userId,
-    requestId,
-    starportId: data?.starport_id || null,
-    itemId: data?.itemId || data?.item_id || null,
-    source: data?.source || null
-  });
-
   try {
     const dockedStarport = await getDockedMarketStarport(player, userId);
     const requestedStarport = normalizeStarportId(data?.starport_id);
@@ -5581,15 +5633,6 @@ async function handleRefineOre(socket, data) {
       return;
     }
 
-    console.log('[REFINERY] success', {
-      userId,
-      requestId,
-      starportId: dockedStarport,
-      source,
-      sourceItemId: itemId,
-      oreType,
-      refinedAmount
-    });
     sendRefineryResult(socket, {
       requestId,
       ok: true,
@@ -5605,11 +5648,7 @@ async function handleRefineOre(socket, data) {
       storage
     });
   } catch (e) {
-    console.warn('[REFINERY] failure', {
-      userId,
-      requestId: data?.requestId || null,
-      error: e?.message || e
-    });
+    console.warn('[Refinery] failed:', e?.message || e);
     sendRefineryResult(socket, { requestId: data?.requestId || null, ok: false, error: e?.message || 'refinery_failed' });
   }
 }

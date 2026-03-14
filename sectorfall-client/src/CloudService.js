@@ -17,6 +17,41 @@ import { getStarterLoadout } from "./data/items/starters.js";
 const supabase = supabaseAdmin || anonSupabase;
 
 
+const normalizeStableItemIdentity = (item) => {
+  if (!item || typeof item !== "object") return { item, changed: false };
+  const nextItem = { ...item };
+  const fallbackId = String(nextItem.id || nextItem.instance_id || nextItem.instanceId || nextItem.item_instance_id || nextItem.itemInstanceId || '').trim();
+  const stableId = fallbackId || uuid();
+  let changed = false;
+
+  if (String(nextItem.id || '').trim() !== stableId) {
+    nextItem.id = stableId;
+    changed = true;
+  }
+  if (String(nextItem.instance_id || '').trim() !== stableId) {
+    nextItem.instance_id = stableId;
+    changed = true;
+  }
+  if (String(nextItem.instanceId || '').trim() !== stableId) {
+    nextItem.instanceId = stableId;
+    changed = true;
+  }
+
+  return { item: nextItem, changed };
+};
+
+const normalizeStableItemList = (items) => {
+  if (!Array.isArray(items)) return { items: [], changed: false };
+  let changed = false;
+  const normalized = items.map((entry) => {
+    if (!entry || typeof entry !== "object") return entry;
+    const result = normalizeStableItemIdentity(entry);
+    if (result.changed) changed = true;
+    return result.item;
+  });
+  return { items: normalized, changed };
+};
+
 
 // -----------------------------------------------------
 // CLOUD SERVICE CONFIG
@@ -292,7 +327,7 @@ class CloudService {
 
 
     // Cargo integrity check uses an empty list if missing
-    const cargo = Array.isArray(resolvedCargo) ? resolvedCargo : [];
+    const cargo = normalizeStableItemList(Array.isArray(resolvedCargo) ? resolvedCargo : []).items;
     const _registryKey = resolveShipRegistryKey(shipType) || shipType;
     const shipConfig = SHIP_REGISTRY[_registryKey];
 
@@ -355,12 +390,15 @@ class CloudService {
         delete telemetry.energy;
         delete telemetry.maxEnergy;
       }
+      if (telemetry && Array.isArray(cargo)) {
+        telemetry.cargo = cargo;
+      }
 
       const persistentState = {
         player_id: playerId,
         starport_id: normalizedStarportId,
         ship_type: shipType,
-        cargo: resolvedCargo,
+        cargo,
         fittings: data.fittings || {},
                 // ✅ v2 physical columns
         // IMPORTANT: vitals (hull/shields/energy) are authoritative on EC2.
@@ -438,6 +476,16 @@ system_id: data.system_id || telemetry?.system_id || undefined,
           console.log(
             `[CloudService] [LOAD] Cargo manifest loaded. Items: ${data.cargo.length}`
           );
+          const normalizedCargo = normalizeStableItemList(data.cargo);
+          data.cargo = normalizedCargo.items;
+          if (data.telemetry && Array.isArray(data.telemetry.cargo)) {
+            data.telemetry.cargo = normalizedCargo.items;
+          }
+          if (normalizedCargo.changed) {
+            await supabase
+              .from("ship_states_v2")
+              .upsert({ player_id: playerId, cargo: normalizedCargo.items, updated_at: new Date().toISOString() }, { onConflict: "player_id" });
+          }
         }
       }
       // -----------------------------------------------------
@@ -585,6 +633,15 @@ system_id: data.system_id || telemetry?.system_id || undefined,
 
       if (error) throw error;
       if (data && !Array.isArray(data.items)) data.items = [];
+      if (data) {
+        const normalizedItems = normalizeStableItemList(data.items);
+        data.items = normalizedItems.items;
+        if (normalizedItems.changed) {
+          await supabase
+            .from("inventory_states")
+            .upsert({ player_id: playerId, starport_id: normalizedStarportId, items: normalizedItems.items }, { onConflict: "player_id,starport_id" });
+        }
+      }
       return data;
     } catch (e) {
       console.warn(
@@ -695,7 +752,17 @@ system_id: data.system_id || telemetry?.system_id || undefined,
                            .eq("player_id", playerId);
 
                          if (error) throw error;
-                         return data || [];
+                         const rows = Array.isArray(data) ? data : [];
+                         for (const row of rows) {
+                           const normalizedItems = normalizeStableItemList(Array.isArray(row?.items) ? row.items : []);
+                           row.items = normalizedItems.items;
+                           if (normalizedItems.changed) {
+                             await supabase
+                               .from("inventory_states")
+                               .upsert({ player_id: playerId, starport_id: row.starport_id, items: normalizedItems.items }, { onConflict: "player_id,starport_id" });
+                           }
+                         }
+                         return rows;
                        } catch (e) {
                          console.warn("[CloudService] Failed to fetch all inventory_states:", e.message);
                          return [];
@@ -733,11 +800,12 @@ async saveInventoryState(playerId, starportId, items, context = "unknown") {
       const filteredItems = (items || []).filter(
         (i) => i.type !== "ship" && !i.isShip
       );
+      const normalizedItems = normalizeStableItemList(filteredItems);
 
       const upsertPayload = {
         player_id: playerId,
         starport_id: normalizedStarportId,
-        items: filteredItems,
+        items: normalizedItems.items,
       };
 
       const { data, error } = await supabase
