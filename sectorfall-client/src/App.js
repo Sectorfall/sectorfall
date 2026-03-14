@@ -9298,15 +9298,20 @@ if (gameManagerRef.current) {
             if (hangarData) {
                 hangarShips = (hangarData || []).map(h => {
                     const config = h.ship_config || {};
-                    const type = config.type || config.item_id || 'OMNI SCOUT';
-                    const registry = SHIP_REGISTRY[type] || SHIP_REGISTRY['OMNI SCOUT'];
-                    
+                    const canonicalType = getCanonicalShipId(config.type, config.item_id, config.ship_id, 'ship_omni_scout') || 'ship_omni_scout';
+                    const registryKey = resolveShipRegistryKey(canonicalType) || canonicalType;
+                    const registry = SHIP_REGISTRY[registryKey] || SHIP_REGISTRY[canonicalType] || SHIP_REGISTRY['ship_omni_scout'];
+
                     return hydrateVessel({
-                        ...registry, // Use registry as base for safety
-                        ...config, // Overlay stored instance data
+                        ...registry,
                         id: h.ship_id,
-                        type: type, // Ensure type matches registry key
-                        dbId: h.id // internal row id
+                        type: canonicalType,
+                        name: getShipDisplayName(canonicalType)
+                    }, {
+                        ...config,
+                        id: h.ship_id,
+                        type: canonicalType,
+                        dbId: h.id
                     });
                 });
             }
@@ -9365,12 +9370,13 @@ if (gameManagerRef.current) {
             // Build runtime fleet only from authoritative live ship state + hangar records.
             let activeShip = null;
             if (activeShipInstanceId) {
+                const activeHangarEntry = hangarShips.find(ship => ship && ship.id === activeShipInstanceId) || null;
                 const activeShipSeed = {
                     id: activeShipInstanceId,
                     type: canonicalLoadedShipType,
                     name: getShipDisplayName(canonicalLoadedShipType)
                 };
-                activeShip = hydrateVessel(activeShipSeed, activeShipSeed, telemetry || cloudRecord || null);
+                activeShip = hydrateVessel(activeShipSeed, activeHangarEntry || activeShipSeed, telemetry || cloudRecord || null);
                 newState.activeShipId = activeShipInstanceId;
             }
 
@@ -9461,30 +9467,48 @@ if (gameManagerRef.current) {
                         cloudService.getHangarShips(cloudService.user.id, starportId)
                     ]);
                     
-                    setGameState(prev => ({ ...prev,
-                        storage: { ...prev.storage, [starportId]: (Array.isArray(inventoryState?.items) ? inventoryState.items : []).filter(i => i.type !== 'ship' && !i.isShip) },
-                        hangarShips: (hangarData || []).map(h => {
+                    setGameState(prev => {
+                        const hydratedHangarShips = (hangarData || []).map(h => {
                             const config = h.ship_config || {};
-                            const type = config.type || config.item_id || 'OMNI SCOUT';
-                            const registry = SHIP_REGISTRY[type] || SHIP_REGISTRY['OMNI SCOUT'];
-                            return {
+                            const canonicalType = getCanonicalShipId(config.type, config.item_id, config.ship_id, 'ship_omni_scout') || 'ship_omni_scout';
+                            const registryKey = resolveShipRegistryKey(canonicalType) || canonicalType;
+                            const registry = SHIP_REGISTRY[registryKey] || SHIP_REGISTRY[canonicalType] || SHIP_REGISTRY['ship_omni_scout'];
+                            return hydrateVessel({
                                 ...registry,
+                                id: h.ship_id,
+                                type: canonicalType,
+                                name: getShipDisplayName(canonicalType)
+                            }, {
                                 ...config,
                                 id: h.ship_id,
-                                type: type,
-                                classId: registry.classId || type,
-                                isShip: true,
-                                hp: config.hp ?? registry.hp,
-                                energy: config.energy ?? registry.baseEnergy,
-                                fittings: config.fittings || {
-                                    weapon1: null, weapon2: null, active1: null,
-                                    passive1: null, passive2: null, rig1: null,
-                                    synapse1: null, synapse2: null, synapse3: null
-                                },
+                                type: canonicalType,
                                 dbId: h.id
-                            };
-                        })
-                    }));
+                            });
+                        });
+                        const activeHangarShip = hydratedHangarShips.find(ship => ship && ship.id === prev.activeShipId) || null;
+                        const nextActiveFittings = activeHangarShip?.fittings || prev.fittings;
+                        return {
+                            ...prev,
+                            storage: { ...prev.storage, [starportId]: (Array.isArray(inventoryState?.items) ? inventoryState.items : []).filter(i => i.type !== 'ship' && !i.isShip) },
+                            hangarShips: hydratedHangarShips,
+                            fittings: nextActiveFittings,
+                            ownedShips: Array.isArray(prev.ownedShips)
+                                ? prev.ownedShips.map(ship => ship && ship.id === prev.activeShipId
+                                    ? {
+                                        ...ship,
+                                        ...(activeHangarShip || {}),
+                                        fittings: nextActiveFittings,
+                                        hp: typeof prev.hp === 'number' ? prev.hp : (activeHangarShip?.hp ?? ship.hp),
+                                        maxHp: typeof prev.maxHp === 'number' ? prev.maxHp : (activeHangarShip?.maxHp ?? ship.maxHp),
+                                        shields: typeof prev.shields === 'number' ? prev.shields : (activeHangarShip?.shields ?? ship.shields),
+                                        maxShields: typeof prev.maxShields === 'number' ? prev.maxShields : (activeHangarShip?.maxShields ?? ship.maxShields),
+                                        energy: typeof prev.energy === 'number' ? prev.energy : (activeHangarShip?.energy ?? ship.energy),
+                                        maxEnergy: typeof prev.maxEnergy === 'number' ? prev.maxEnergy : (activeHangarShip?.maxEnergy ?? ship.maxEnergy)
+                                      }
+                                    : ship)
+                                : prev.ownedShips
+                        };
+                    });
                 })();
             }
         }
