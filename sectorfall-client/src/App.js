@@ -44,6 +44,36 @@ function numOr(value, fallback = 0) {
     : fallback;
 }
 
+function getAuthoritativeCombatStats(entity) {
+  if (!entity || typeof entity !== 'object') return null;
+  if (entity.combatStats && typeof entity.combatStats === 'object') return entity.combatStats;
+  if (entity.combat_stats && typeof entity.combat_stats === 'object') return entity.combat_stats;
+  return null;
+}
+
+function getAuthoritativeShieldMax(entity) {
+  const combatStats = getAuthoritativeCombatStats(entity);
+  const topLevel = Number(entity?.maxShields);
+  if (Number.isFinite(topLevel) && topLevel > 0) return topLevel;
+
+  const combatMax = Number(combatStats?.maxShields ?? combatStats?.shieldCapacity);
+  if (Number.isFinite(combatMax) && combatMax > 0) return combatMax;
+
+  return 0;
+}
+
+function getAuthoritativeShieldValue(entity) {
+  const combatStats = getAuthoritativeCombatStats(entity);
+  const topLevel = Number(entity?.shields);
+  if (Number.isFinite(topLevel)) return topLevel;
+
+  const combatValue = Number(combatStats?.shields);
+  if (Number.isFinite(combatValue)) return combatValue;
+
+  const shieldMax = getAuthoritativeShieldMax(entity);
+  return shieldMax > 0 ? shieldMax : 0;
+}
+
 // -----------------------------------------------------
 // SHIP DISPLAY NAME (ship_id -> human name)
 // -----------------------------------------------------
@@ -6941,6 +6971,8 @@ const StationInterior = ({
 const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
     const { offset, isDragging, dragProps } = useDraggable();
     const [showFullStats, setShowFullStats] = useState(false);
+    const displayShieldMax = getAuthoritativeShieldMax(gameState);
+    const displayShields = getAuthoritativeShieldValue(gameState);
     
     // Live recalculation of usage stats for display synchronization
     const { power: currentPower, cpu: currentCpu } = getLiveShipResources(gameState.fittings);
@@ -7121,7 +7153,7 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
                             React.createElement('div', { style: { flex: 1 } },
                                 [
                                     { label: 'HULL', value: `${(gameState.hp || 0).toFixed(1)}/${gameState.maxHp.toFixed(1)}`, color: '#ff4444' },
-                                    { label: 'SHIELDS', value: gameState.maxShields > 0 ? `${(gameState.shields || 0).toFixed(1)}/${gameState.maxShields.toFixed(1)}` : 'OFFLINE', color: '#00ccff' },
+                                    { label: 'SHIELDS', value: displayShieldMax > 0 ? `${displayShields.toFixed(1)}/${displayShieldMax.toFixed(1)}` : 'OFFLINE', color: '#00ccff' },
                                     { label: 'ENERGY', value: `${(gameState.energy || 0).toFixed(1)}/${gameState.maxEnergy}`, color: '#00ff00' },
                                     { label: 'PWR GRID', value: `${(hasAnyModules ? currentPower : 0).toFixed(1)} / ${gameState.maxPowerGrid}`, color: '#ffcc00' },
                                     { label: 'CPU', value: `${(hasAnyModules ? currentCpu : 0).toFixed(1)} / ${gameState.maxCpu}`, color: '#00ccff' }
@@ -12416,7 +12448,7 @@ backendSocket.sendUndock(
                     }
                 }, gameState.shipName.toUpperCase()),
 
-                gameState.maxShields > 0 ? React.createElement(BarRow, { color: '#00ccff', percent: (gameState.shields / gameState.maxShields) * 100, value: gameState.shields, icon: React.createElement(IconShield) }) : null,
+                getAuthoritativeShieldMax(gameState) > 0 ? React.createElement(BarRow, { color: '#00ccff', percent: (getAuthoritativeShieldValue(gameState) / getAuthoritativeShieldMax(gameState)) * 100, value: getAuthoritativeShieldValue(gameState), icon: React.createElement(IconShield) }) : null,
                 React.createElement(BarRow, { 
                     color: '#ff0000', 
                     percent: (gameState.hp / gameState.maxHp) * 100, 
