@@ -2410,6 +2410,21 @@ handleMarketActionResult(data) {
   }
 
 
+  handleCommanderFittingResult(data) {
+    try {
+      const requestId = data?.requestId || data?.request_id || null;
+      if (requestId) {
+        const pending = this._pendingFittingRequests.get(requestId);
+        if (pending) {
+          this._pendingFittingRequests.delete(requestId);
+          pending.resolve(data);
+        }
+      }
+    } catch (err) {
+      console.warn('[BackendSocket] handleCommanderFittingResult failed', err);
+    }
+  }
+
   disconnect() {
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);

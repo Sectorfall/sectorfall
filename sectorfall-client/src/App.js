@@ -10287,12 +10287,28 @@ showStarportUI: function (starportId) {
                 const nextOwnedShips = Array.isArray(result?.commanderState?.owned_ships)
                     ? result.commanderState.owned_ships.map(ship => hydrateVessel(ship, ship))
                     : prev.ownedShips;
+                const nextActiveShipStats = result?.active_ship_stats || null;
+                const nextCombatStats = nextActiveShipStats?.combat_stats || prev.combat_stats;
                 return {
                     ...prev,
                     inventory: nextInventory,
                     storage: { ...(prev.storage || {}), [starportId]: nextStorageItems },
                     ownedShips: nextOwnedShips,
-                    currentCargoWeight: nextCargoWeight
+                    currentCargoWeight: nextCargoWeight,
+                    fittings: nextActiveShipStats?.fittings || prev.fittings,
+                    hp: Number.isFinite(nextActiveShipStats?.hp) ? nextActiveShipStats.hp : prev.hp,
+                    maxHp: Number.isFinite(nextActiveShipStats?.maxHp) ? nextActiveShipStats.maxHp : prev.maxHp,
+                    shields: Number.isFinite(nextActiveShipStats?.shields) ? nextActiveShipStats.shields : prev.shields,
+                    maxShields: Number.isFinite(nextActiveShipStats?.maxShields) ? nextActiveShipStats.maxShields : prev.maxShields,
+                    energy: Number.isFinite(nextActiveShipStats?.energy) ? nextActiveShipStats.energy : prev.energy,
+                    maxEnergy: Number.isFinite(nextActiveShipStats?.maxEnergy) ? nextActiveShipStats.maxEnergy : prev.maxEnergy,
+                    combat_stats: nextCombatStats,
+                    armor: Number.isFinite(nextCombatStats?.armor) ? nextCombatStats.armor : prev.armor,
+                    resistances: nextCombatStats?.resistances || prev.resistances,
+                    maxPowerGrid: Number.isFinite(nextCombatStats?.powergrid) ? nextCombatStats.powergrid : prev.maxPowerGrid,
+                    maxCpu: Number.isFinite(nextCombatStats?.cpu) ? nextCombatStats.cpu : prev.maxCpu,
+                    currentLiveShipId: result?.commanderState?.active_ship_id || prev.currentLiveShipId,
+                    shipId: result?.commanderState?.active_ship_id || prev.shipId
                 };
             });
 
@@ -10353,12 +10369,28 @@ showStarportUI: function (starportId) {
                 const nextOwnedShips = Array.isArray(result?.commanderState?.owned_ships)
                     ? result.commanderState.owned_ships.map(ship => hydrateVessel(ship, ship))
                     : prev.ownedShips;
+                const nextActiveShipStats = result?.active_ship_stats || null;
+                const nextCombatStats = nextActiveShipStats?.combat_stats || prev.combat_stats;
                 return {
                     ...prev,
                     inventory: nextInventory,
                     storage: { ...(prev.storage || {}), [starportId]: nextStorageItems },
                     ownedShips: nextOwnedShips,
-                    currentCargoWeight: nextCargoWeight
+                    currentCargoWeight: nextCargoWeight,
+                    fittings: nextActiveShipStats?.fittings || prev.fittings,
+                    hp: Number.isFinite(nextActiveShipStats?.hp) ? nextActiveShipStats.hp : prev.hp,
+                    maxHp: Number.isFinite(nextActiveShipStats?.maxHp) ? nextActiveShipStats.maxHp : prev.maxHp,
+                    shields: Number.isFinite(nextActiveShipStats?.shields) ? nextActiveShipStats.shields : prev.shields,
+                    maxShields: Number.isFinite(nextActiveShipStats?.maxShields) ? nextActiveShipStats.maxShields : prev.maxShields,
+                    energy: Number.isFinite(nextActiveShipStats?.energy) ? nextActiveShipStats.energy : prev.energy,
+                    maxEnergy: Number.isFinite(nextActiveShipStats?.maxEnergy) ? nextActiveShipStats.maxEnergy : prev.maxEnergy,
+                    combat_stats: nextCombatStats,
+                    armor: Number.isFinite(nextCombatStats?.armor) ? nextCombatStats.armor : prev.armor,
+                    resistances: nextCombatStats?.resistances || prev.resistances,
+                    maxPowerGrid: Number.isFinite(nextCombatStats?.powergrid) ? nextCombatStats.powergrid : prev.maxPowerGrid,
+                    maxCpu: Number.isFinite(nextCombatStats?.cpu) ? nextCombatStats.cpu : prev.maxCpu,
+                    currentLiveShipId: result?.commanderState?.active_ship_id || prev.currentLiveShipId,
+                    shipId: result?.commanderState?.active_ship_id || prev.shipId
                 };
             });
 
