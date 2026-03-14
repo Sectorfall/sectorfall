@@ -46,6 +46,59 @@ export const createAuthoritativeShipStateHandler = ({
       || null
     ) || null;
 
+    const noActiveShip = detail?.no_active_ship === true || (detail?.active_ship_id === null && !nextCombatStats && !authoritativeShipId);
+
+    if (noActiveShip) {
+      console.log('[Authoritative Ship State] clearing local live ship state from authoritative dock payload');
+      setGameState(prev => ({
+        ...prev,
+        activeShipId: null,
+        hp: 0,
+        maxHp: 0,
+        shields: 0,
+        maxShields: 0,
+        energy: 0,
+        maxEnergy: 0,
+        armor: 0,
+        resistances: {},
+        combatStats: null,
+        fittings: {},
+        shipName: prev.shipName,
+        shipClass: prev.shipClass
+      }));
+
+      if (gameManagerRef.current?.stats) {
+        gameManagerRef.current.stats.hp = 0;
+        gameManagerRef.current.stats.maxHp = 0;
+        gameManagerRef.current.stats.shields = 0;
+        gameManagerRef.current.stats.maxShields = 0;
+        gameManagerRef.current.stats.energy = 0;
+        gameManagerRef.current.stats.maxEnergy = 0;
+        gameManagerRef.current.stats.armor = 0;
+        gameManagerRef.current.stats.resistances = {};
+        gameManagerRef.current.stats.combatStats = null;
+      }
+      gameManagerRef.current.fittings = {};
+      gameManagerRef.current.gameState = {
+        ...(gameManagerRef.current?.gameState || {}),
+        fittings: {}
+      };
+      if (gameManagerRef.current?.ship) {
+        gameManagerRef.current.ship.type = null;
+        gameManagerRef.current.ship.hp = 0;
+        gameManagerRef.current.ship.maxHp = 0;
+        gameManagerRef.current.ship.shields = 0;
+        gameManagerRef.current.ship.maxShields = 0;
+        gameManagerRef.current.ship.energy = 0;
+        gameManagerRef.current.ship.maxEnergy = 0;
+        gameManagerRef.current.ship.armor = 0;
+        gameManagerRef.current.ship.resistances = {};
+        gameManagerRef.current.ship.combatStats = null;
+        gameManagerRef.current.ship.fittings = {};
+      }
+      return;
+    }
+
     console.log('[Authoritative Ship State]', {
       shipId: authoritativeShipId,
       currentLiveShipId,

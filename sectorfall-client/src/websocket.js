@@ -53,6 +53,11 @@ function validateAuthoritativeCombatStats(data = {}, label = 'AUTHORITATIVE_SHIP
   }
   if (missing.length <= 0) return { ok: true, combatStats, missing: [] };
 
+  if (data?.no_active_ship === true) {
+    console.warn(`[${label}] No active ship attached to authoritative payload. Clearing local live ship state.`);
+    return { ok: false, combatStats, missing };
+  }
+
   console.error(`[${label}] Missing authoritative combat stats:`, missing, combatStats || null);
   try {
     window.dispatchEvent(new CustomEvent('sectorfall:authoritative_ship_state_invalid', {
@@ -676,8 +681,12 @@ export class BackendSocket {
     this.isDocked = true;
     this.starportId = data.starport_id;
     this.currentSystemId = STARPORT_TO_SYSTEM[String(data.starport_id || '').trim().toUpperCase()] || this.currentSystemId;
-    validateAuthoritativeCombatStats(data, 'DOCKED');
-    try { window.dispatchEvent(new CustomEvent("sectorfall:authoritative_ship_state", { detail: data })); } catch {}
+    const dockedStateHasActiveShip = !!getCombatStatsPayload(data);
+    const authoritativeDockPayload = dockedStateHasActiveShip
+      ? data
+      : { ...data, no_active_ship: true, active_ship_id: null, shipId: null, ship_id: null, fittings: {} };
+    validateAuthoritativeCombatStats(authoritativeDockPayload, 'DOCKED');
+    try { window.dispatchEvent(new CustomEvent("sectorfall:authoritative_ship_state", { detail: authoritativeDockPayload })); } catch {}
 
     // while docked, we are not in space with a valid spawn
     this.awaitingSpawn = true;
@@ -2269,6 +2278,8 @@ handleMarketActionResult(data) {
       window.dispatchEvent(new CustomEvent("sectorfall:commander_state", { detail: data }));
       if (data?.active_ship_stats) {
         window.dispatchEvent(new CustomEvent("sectorfall:authoritative_ship_state", { detail: data.active_ship_stats }));
+      } else if (Object.prototype.hasOwnProperty.call(data || {}, 'active_ship_id') && !data?.active_ship_id) {
+        window.dispatchEvent(new CustomEvent("sectorfall:authoritative_ship_state", { detail: { no_active_ship: true, active_ship_id: null, shipId: null, ship_id: null, fittings: {} } }));
       }
     } catch {
       // ignore

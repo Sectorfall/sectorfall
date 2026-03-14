@@ -8748,24 +8748,56 @@ useEffect(() => {
         const activeShipStats = (detail.active_ship_stats && typeof detail.active_ship_stats === 'object') ? detail.active_ship_stats : null;
         const activeShipCombatStats = (activeShipStats?.combatStats && typeof activeShipStats.combatStats === 'object') ? activeShipStats.combatStats : null;
         const activeShipFittings = (activeShipStats?.fittings && typeof activeShipStats.fittings === 'object') ? activeShipStats.fittings : null;
+        const hasExplicitActiveShipField = Object.prototype.hasOwnProperty.call(detail, 'active_ship_id');
+        const nextActiveShipId = isPersistableShipId(detail.active_ship_id) ? detail.active_ship_id : null;
+        const clearActiveShip = hasExplicitActiveShipField && !nextActiveShipId && !activeShipStats;
         setGameState(prev => ({
             ...prev,
             credits: typeof detail.credits === 'number' ? detail.credits : prev.credits,
             experience: typeof detail.experience === 'number' ? detail.experience : prev.experience,
             level: typeof detail.level === 'number' ? detail.level : prev.level,
             commanderName: nextCommanderName || prev.commanderName,
-            activeShipId: isPersistableShipId(detail.active_ship_id) ? detail.active_ship_id : prev.activeShipId,
-            hp: typeof activeShipStats?.hp === 'number' ? activeShipStats.hp : prev.hp,
-            maxHp: typeof activeShipStats?.maxHp === 'number' ? activeShipStats.maxHp : (typeof activeShipCombatStats?.maxHp === 'number' ? activeShipCombatStats.maxHp : prev.maxHp),
-            shields: typeof activeShipStats?.shields === 'number' ? activeShipStats.shields : prev.shields,
-            maxShields: typeof activeShipStats?.maxShields === 'number' ? activeShipStats.maxShields : (typeof activeShipCombatStats?.maxShields === 'number' ? activeShipCombatStats.maxShields : prev.maxShields),
-            energy: typeof activeShipStats?.energy === 'number' ? activeShipStats.energy : prev.energy,
-            maxEnergy: typeof activeShipStats?.maxEnergy === 'number' ? activeShipStats.maxEnergy : (typeof activeShipCombatStats?.maxEnergy === 'number' ? activeShipCombatStats.maxEnergy : prev.maxEnergy),
-            armor: typeof activeShipStats?.armor === 'number' ? activeShipStats.armor : (typeof activeShipCombatStats?.armor === 'number' ? activeShipCombatStats.armor : prev.armor),
-            resistances: activeShipStats?.resistances && typeof activeShipStats.resistances === 'object' ? activeShipStats.resistances : prev.resistances,
-            combatStats: activeShipCombatStats || prev.combatStats,
-            fittings: activeShipFittings || prev.fittings
+            activeShipId: hasExplicitActiveShipField ? nextActiveShipId : prev.activeShipId,
+            hp: clearActiveShip ? 0 : (typeof activeShipStats?.hp === 'number' ? activeShipStats.hp : prev.hp),
+            maxHp: clearActiveShip ? 0 : (typeof activeShipStats?.maxHp === 'number' ? activeShipStats.maxHp : (typeof activeShipCombatStats?.maxHp === 'number' ? activeShipCombatStats.maxHp : prev.maxHp)),
+            shields: clearActiveShip ? 0 : (typeof activeShipStats?.shields === 'number' ? activeShipStats.shields : prev.shields),
+            maxShields: clearActiveShip ? 0 : (typeof activeShipStats?.maxShields === 'number' ? activeShipStats.maxShields : (typeof activeShipCombatStats?.maxShields === 'number' ? activeShipCombatStats.maxShields : prev.maxShields)),
+            energy: clearActiveShip ? 0 : (typeof activeShipStats?.energy === 'number' ? activeShipStats.energy : prev.energy),
+            maxEnergy: clearActiveShip ? 0 : (typeof activeShipStats?.maxEnergy === 'number' ? activeShipStats.maxEnergy : (typeof activeShipCombatStats?.maxEnergy === 'number' ? activeShipCombatStats.maxEnergy : prev.maxEnergy)),
+            armor: clearActiveShip ? 0 : (typeof activeShipStats?.armor === 'number' ? activeShipStats.armor : (typeof activeShipCombatStats?.armor === 'number' ? activeShipCombatStats.armor : prev.armor)),
+            resistances: clearActiveShip ? {} : (activeShipStats?.resistances && typeof activeShipStats.resistances === 'object' ? activeShipStats.resistances : prev.resistances),
+            combatStats: clearActiveShip ? null : (activeShipCombatStats || prev.combatStats),
+            fittings: clearActiveShip ? {} : (activeShipFittings || prev.fittings)
         }));
+
+        if (clearActiveShip && gameManagerRef.current) {
+            if (gameManagerRef.current.stats) {
+                gameManagerRef.current.stats.hp = 0;
+                gameManagerRef.current.stats.maxHp = 0;
+                gameManagerRef.current.stats.shields = 0;
+                gameManagerRef.current.stats.maxShields = 0;
+                gameManagerRef.current.stats.energy = 0;
+                gameManagerRef.current.stats.maxEnergy = 0;
+                gameManagerRef.current.stats.armor = 0;
+                gameManagerRef.current.stats.resistances = {};
+                gameManagerRef.current.stats.combatStats = null;
+            }
+            gameManagerRef.current.fittings = {};
+            gameManagerRef.current.gameState = { ...(gameManagerRef.current.gameState || {}), fittings: {} };
+            if (gameManagerRef.current.ship) {
+                gameManagerRef.current.ship.type = null;
+                gameManagerRef.current.ship.hp = 0;
+                gameManagerRef.current.ship.maxHp = 0;
+                gameManagerRef.current.ship.shields = 0;
+                gameManagerRef.current.ship.maxShields = 0;
+                gameManagerRef.current.ship.energy = 0;
+                gameManagerRef.current.ship.maxEnergy = 0;
+                gameManagerRef.current.ship.armor = 0;
+                gameManagerRef.current.ship.resistances = {};
+                gameManagerRef.current.ship.combatStats = null;
+                gameManagerRef.current.ship.fittings = {};
+            }
+        }
 
         if (gameManagerRef.current?.stats && activeShipStats) {
             if (typeof activeShipStats.hp === 'number') gameManagerRef.current.stats.hp = activeShipStats.hp;
