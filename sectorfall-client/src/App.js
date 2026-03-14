@@ -36,7 +36,7 @@ import { useCargoMenuState } from './features/inventory/inventoryState.js';
 import { getCurrentTradeStarportId, buildTradeStorageState, getCommanderCreditsFromResult } from './features/trade/tradeHelpers.js';
 import { useTradeHubState } from './features/trade/tradeState.js';
 import { createTradeListingTransaction, buyTradeListingTransaction, createTradeBuyOrderTransaction, cancelTradeListingTransaction } from './features/trade/tradeActions.js';
-import { buildFabricationRequestPayload, buildFabricationStateUpdate, buildRefineryRequestPayload, buildRefineryStateUpdateFromResult } from './features/fabrication/fabricationActions.js';
+import { buildFabricationRequestPayload, buildFabricationStateUpdate, buildRefineryStateUpdate } from './features/fabrication/fabricationActions.js';
 import { getFabricationErrorMessage, getFabricationSuccessMessage, getRefineryErrorMessage } from './features/fabrication/fabricationHelpers.js';
 function numOr(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value)
@@ -10525,80 +10525,11 @@ showStarportUI: function (starportId) {
         }
 
         const homeStarport = gameState.homeStarport || 'CYGNUS_PRIME_STARPORT';
-        const respawnSystemId = STARPORT_TO_SYSTEM[homeStarport] || 'cygnus-prime';
-        const respawnSystem = SYSTEMS_REGISTRY[respawnSystemId] || SYSTEMS_REGISTRY['cygnus-prime'];
-        
-        // 1. Process local state reset for vessel loss
-        setGameState(prev => {
-            const destroyedShipId = prev.activeShipId;
-            const nextOwnedShips = prev.ownedShips.filter(s => s.id !== destroyedShipId);
-
-            const newState = {
-                ...prev,
-                ownedShips: nextOwnedShips,
-                activeShipId: null,
-                shipName: 'NO ACTIVE SHIP',
-                shipClass: 'NONE',
-                fittings: SAFE_DEFAULT_FITTINGS,
-                hp: 0, maxHp: 0, shields: 0, maxShields: 0,
-                energy: 0, maxEnergy: 0, currentPowerGrid: 0, currentCpu: 0,
-                inventory: [], currentCargoWeight: 0,
-                currentSystem: {
-                    id: respawnSystemId,
-                    name: respawnSystem.name.toUpperCase(),
-                    sector: respawnSystem.sector,
-                    security: respawnSystem.security,
-                    securityValue: respawnSystem.securityValue
-                }
-            };
-
-            // PERSISTENCE FIX: Sync manifest loss to cloud immediately
-            if (cloudUser) {
-                cloudService.updateCommanderData(cloudUser.id, {
-                    owned_ships: nextOwnedShips,
-                    active_ship_id: null,
-                    explicit_clear_active_ship_id: true
-                });
-            }
-
-            return newState;
-        });
-
-        // 2. Authoritative Storage Check: Issue starter kit if no ships are owned in storage or hangar
-        try {
-            const starportId = homeStarport;
-            const [inventoryState, hangarData] = await Promise.all([
-                cloudService.getInventoryState(playerId, starportId),
-                cloudService.getHangarShips(playerId, starportId)
-            ]);
-            
-            const storedShipsInHangar = hangarData || [];
-            
-            if (storedShipsInHangar.length === 0) {
-                const kitResult = await cloudService.issueStarterKit(playerId, starportId);
-                if (kitResult.success) {
-                    showNotification("You have been issued an Omni Scout and starting equipment.", "success");
-                    
-                    // Re-sync storage and hangar to reflect the new kit
-                    const [updatedInventory, updatedHangar] = await Promise.all([
-                        cloudService.getInventoryState(playerId, starportId),
-                        cloudService.getHangarShips(playerId, starportId)
-                    ]);
-                    
-                    if (updatedInventory || updatedHangar) {
-                        setGameState(prev => ({ ...prev,
-                            storage: { ...prev.storage, [starportId]: (Array.isArray(updatedInventory?.items) ? updatedInventory.items : []).filter(i => i.type !== 'ship') },
-                            hangarShips: (updatedHangar || []).map(h => ({
-                                ...h.ship_config,
-                                id: h.ship_id,
-                                dbId: h.id
-                            }))
-                        }));
-                    }
-                }
-            }
-        } catch (err) {
-            console.error("[handleRespawn] Storage check/kit issuance failed:", err);
+        const backendSocket = window.backendSocket;
+        if (!backendSocket || typeof backendSocket.requestRespawnHome !== 'function') {
+            console.error('[handleRespawn] Backend respawn flow unavailable.');
+            showNotification('Respawn unavailable. Please reconnect and try again.', 'error');
+            return;
         }
 
         if (destroyedButtonTimeoutRef.current) {
@@ -10612,33 +10543,56 @@ showStarportUI: function (starportId) {
         setBattlegroundExtractState(null);
         setBattlegroundState(prev => ({ ...prev, open: false, status: 'idle', currentInstanceId: null, bankedCredits: 0, choice: null, hud: { currentWave: 0, enemiesRemaining: 0, statusLabel: 'STANDBY' } }));
 
-        // 3. Request authoritative home-starport respawn from backend.
-        // websocket.js DOCKED handling will load the correct system and show starport UI.
-        if (gameManagerRef.current?.ship?.sprite) {
-            gameManagerRef.current.ship.sprite.visible = false;
-            gameManagerRef.current.ship.sprite.position.set(0, 0, 0);
-        }
-        if (gameManagerRef.current?.ship?.velocity) {
-            gameManagerRef.current.ship.velocity.set(0, 0);
-        }
-
-        let respawnResult = null;
         try {
-            if (window.backendSocket?.requestRespawnHome) {
-                respawnResult = await window.backendSocket.requestRespawnHome({ starportId: homeStarport });
-            } else {
-                console.warn('[handleRespawn] backendSocket.requestRespawnHome unavailable; local dock fallback would desync authority.');
+            const respawnResult = await backendSocket.requestRespawnHome({ starportId: homeStarport });
+            if (!respawnResult?.ok) {
+                throw new Error(respawnResult?.error || 'respawn_failed');
             }
-        } catch (err) {
-            console.error('[handleRespawn] Authoritative respawn request failed:', err);
-        }
 
-        if (!respawnResult?.ok) {
-            showNotification('RESPAWN FAILED - BACKEND DID NOT CONFIRM DOCK STATE', 'error');
-            return;
-        }
+            try {
+                const commanderState = await backendSocket.requestCommanderState();
+                if (commanderState && typeof commanderState === 'object') {
+                    window.dispatchEvent(new CustomEvent('sectorfall:commander_state', { detail: commanderState }));
+                }
+            } catch {}
 
-        showNotification(`Vessel lost. Respawning at Port ${homeStarport.replace(/_/g, ' ')}.`, "info");
+            // Authoritative Storage Check: starter kit only if the backend truly left the player without any stored ships.
+            try {
+                const starportId = homeStarport;
+                const [updatedInventory, updatedHangar] = await Promise.all([
+                    cloudService.getInventoryState(playerId, starportId),
+                    cloudService.getHangarShips(playerId, starportId)
+                ]);
+                const storedShipsInHangar = Array.isArray(updatedHangar) ? updatedHangar : [];
+
+                if (storedShipsInHangar.length === 0) {
+                    const kitResult = await cloudService.issueStarterKit(playerId, starportId);
+                    if (kitResult.success) {
+                        showNotification('You have been issued an Omni Scout and starting equipment.', 'success');
+                        const [kitInventory, kitHangar] = await Promise.all([
+                            cloudService.getInventoryState(playerId, starportId),
+                            cloudService.getHangarShips(playerId, starportId)
+                        ]);
+                        setGameState(prev => ({
+                            ...prev,
+                            storage: { ...prev.storage, [starportId]: (Array.isArray(kitInventory?.items) ? kitInventory.items : []).filter(i => i.type !== 'ship') },
+                            hangarShips: (kitHangar || []).map(h => ({
+                                ...h.ship_config,
+                                id: h.ship_id,
+                                dbId: h.id
+                            }))
+                        }));
+                    }
+                }
+            } catch (err) {
+                console.error('[handleRespawn] Storage check/kit issuance failed:', err);
+            }
+
+            showNotification(`Vessel lost. Respawning at Port ${homeStarport.replace(/_/g, ' ')}.`, 'info');
+        } catch (error) {
+            console.error('[handleRespawn] Authoritative respawn failed:', error);
+            showNotification('Respawn failed. Please try again.', 'error');
+        }
     };
 
     const handleRespawn = async () => {
@@ -11563,47 +11517,30 @@ backendSocket.sendUndock(
         });
     };
 
-    const handleRefine = async (item, source, filteredIndex = -1) => {
+    const handleRefine = (item, source, filteredIndex = -1) => {
         const starportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
-        if (!starportId) {
-            showNotification(getRefineryErrorMessage('not_docked'), 'error');
-            return { ok: false, error: 'not_docked' };
-        }
+        if (!starportId) return;
 
-        try {
-            const result = await backendSocket.requestRefineOre(buildRefineryRequestPayload({
+        setGameState(prev => {
+            const refineResult = buildRefineryStateUpdate({
+                prev,
                 starportId,
                 item,
                 source,
                 filteredIndex,
-                inventory: gameState.inventory,
-                stationStorage: gameState.storage?.[starportId] || []
-            }));
+                stationCapacity: 1000
+            });
 
-            if (!result) {
-                showNotification('REFINING FAILED: Backend timeout.', 'error');
-                return { ok: false, error: 'timeout' };
+            if (!refineResult.ok) {
+                showNotification(getRefineryErrorMessage(refineResult.error), 'error');
+                return prev;
             }
 
-            if (!result.ok) {
-                showNotification(getRefineryErrorMessage(result.error), 'error');
-                return result;
-            }
+            cloudService.saveInventoryState(cloudUser.id, starportId, refineResult.nextStationStorage, 'refineOre');
+            showNotification(`Refining Complete: ${refineResult.refinedAmount} units of ${refineResult.refinedName} produced at QL ${refineResult.refinedQL}.`, 'success');
 
-            setGameState(prev => buildRefineryStateUpdateFromResult({
-                prev,
-                result,
-                starportId,
-                hydrateItem
-            }).nextState);
-
-            showNotification(`Refining Complete: ${result.refinedAmount} units of ${result.refinedName} produced at QL ${result.refinedQL}.`, 'success');
-            return result;
-        } catch (err) {
-            console.warn('[Refine][Client] backend refine failed', err);
-            showNotification('REFINING FAILED: Backend rejected the request.', 'error');
-            return { ok: false, error: err?.message || 'backend_failure' };
-        }
+            return refineResult.nextState;
+        });
     };
 
 
