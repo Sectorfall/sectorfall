@@ -44,36 +44,6 @@ function numOr(value, fallback = 0) {
     : fallback;
 }
 
-function getAuthoritativeCombatStats(entity) {
-  if (!entity || typeof entity !== 'object') return null;
-  if (entity.combatStats && typeof entity.combatStats === 'object') return entity.combatStats;
-  if (entity.combat_stats && typeof entity.combat_stats === 'object') return entity.combat_stats;
-  return null;
-}
-
-function getAuthoritativeShieldMax(entity) {
-  const combatStats = getAuthoritativeCombatStats(entity);
-  const topLevel = Number(entity?.maxShields);
-  if (Number.isFinite(topLevel) && topLevel > 0) return topLevel;
-
-  const combatMax = Number(combatStats?.maxShields ?? combatStats?.shieldCapacity);
-  if (Number.isFinite(combatMax) && combatMax > 0) return combatMax;
-
-  return 0;
-}
-
-function getAuthoritativeShieldValue(entity) {
-  const combatStats = getAuthoritativeCombatStats(entity);
-  const topLevel = Number(entity?.shields);
-  if (Number.isFinite(topLevel)) return topLevel;
-
-  const combatValue = Number(combatStats?.shields);
-  if (Number.isFinite(combatValue)) return combatValue;
-
-  const shieldMax = getAuthoritativeShieldMax(entity);
-  return shieldMax > 0 ? shieldMax : 0;
-}
-
 // -----------------------------------------------------
 // SHIP DISPLAY NAME (ship_id -> human name)
 // -----------------------------------------------------
@@ -106,6 +76,18 @@ const getShipClassLabel = (shipTypeOrId) => {
   // If the "class" is actually a ship id, don't show it.
   if (String(candidate).toLowerCase().startsWith('ship_')) return 'VESSEL';
   return String(candidate).toUpperCase();
+};
+
+const getCanonicalShipId = (...candidates) => {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const raw = String(candidate).trim();
+    if (!raw) continue;
+    if (raw.toLowerCase().startsWith('ship_')) return raw;
+    const resolved = resolveShipId(raw);
+    if (resolved) return resolved;
+  }
+  return null;
 };
 
 const FleetHUD = ({ fleet, remotePlayers, userId, onTargetMember, onLeaveFleet, onKickMember }) => {
@@ -6323,7 +6305,13 @@ const StationInterior = ({
     const selectedShipIsActive = Boolean(selectedShip && selectedShip.id === gameState.activeShipId);
     const telemetryShip = selectedShip ? (selectedShipIsActive ? {
         ...selectedShip,
-        type: resolveShipId(gameState.shipClass || selectedShip.type) || selectedShip.type,
+        type: getCanonicalShipId(
+            gameState.combatStats?.shipId,
+            gameState.combat_stats?.shipId,
+            selectedShip.combatStats?.shipId,
+            selectedShip.combat_stats?.shipId,
+            selectedShip.type
+        ) || selectedShip.type,
         hp: numOr(gameState.hp, numOr(selectedShip.hp, 0)),
         maxHp: numOr(gameState.maxHp, numOr(selectedShip.maxHp, numOr(selectedShip.hp, 0))),
         shields: numOr(gameState.shields, numOr(selectedShip.shields, 0)),
@@ -6337,7 +6325,11 @@ const StationInterior = ({
         fittings: gameState.fittings || selectedShip.fittings || {}
     } : {
         ...selectedShip,
-        type: resolveShipId(selectedShip.type) || selectedShip.type,
+        type: getCanonicalShipId(
+            selectedShip.combatStats?.shipId,
+            selectedShip.combat_stats?.shipId,
+            selectedShip.type
+        ) || selectedShip.type,
         armor: 0,
         resistances: {},
         combat_stats: null,
@@ -6971,8 +6963,6 @@ const StationInterior = ({
 const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
     const { offset, isDragging, dragProps } = useDraggable();
     const [showFullStats, setShowFullStats] = useState(false);
-    const displayShieldMax = getAuthoritativeShieldMax(gameState);
-    const displayShields = getAuthoritativeShieldValue(gameState);
     
     // Live recalculation of usage stats for display synchronization
     const { power: currentPower, cpu: currentCpu } = getLiveShipResources(gameState.fittings);
@@ -7153,7 +7143,7 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
                             React.createElement('div', { style: { flex: 1 } },
                                 [
                                     { label: 'HULL', value: `${(gameState.hp || 0).toFixed(1)}/${gameState.maxHp.toFixed(1)}`, color: '#ff4444' },
-                                    { label: 'SHIELDS', value: displayShieldMax > 0 ? `${displayShields.toFixed(1)}/${displayShieldMax.toFixed(1)}` : 'OFFLINE', color: '#00ccff' },
+                                    { label: 'SHIELDS', value: gameState.maxShields > 0 ? `${(gameState.shields || 0).toFixed(1)}/${gameState.maxShields.toFixed(1)}` : 'OFFLINE', color: '#00ccff' },
                                     { label: 'ENERGY', value: `${(gameState.energy || 0).toFixed(1)}/${gameState.maxEnergy}`, color: '#00ff00' },
                                     { label: 'PWR GRID', value: `${(hasAnyModules ? currentPower : 0).toFixed(1)} / ${gameState.maxPowerGrid}`, color: '#ffcc00' },
                                     { label: 'CPU', value: `${(hasAnyModules ? currentCpu : 0).toFixed(1)} / ${gameState.maxCpu}`, color: '#00ccff' }
@@ -7931,7 +7921,14 @@ const SAFE_DEFAULT_FITTINGS = {
  * 3. Real-time Telemetry (Latest HP/Energy/Fittings)
  */
 const hydrateVessel = (registryShip, fleetEntry = null, telemetry = null) => {
-    const config = SHIP_REGISTRY[registryShip.type] || SHIP_REGISTRY['OMNI SCOUT'];
+    const registryKey = resolveShipRegistryKey(registryShip?.type) || registryShip?.type;
+    const config = SHIP_REGISTRY[registryKey] || SHIP_REGISTRY[registryShip?.type] || SHIP_REGISTRY['OMNI SCOUT'];
+    const fleetCombatStats = (fleetEntry?.combatStats && typeof fleetEntry.combatStats === 'object')
+        ? fleetEntry.combatStats
+        : ((fleetEntry?.combat_stats && typeof fleetEntry.combat_stats === 'object') ? fleetEntry.combat_stats : null);
+    const telemetryCombatStats = (telemetry?.combatStats && typeof telemetry.combatStats === 'object')
+        ? telemetry.combatStats
+        : ((telemetry?.combat_stats && typeof telemetry.combat_stats === 'object') ? telemetry.combat_stats : null);
     
     // 1. Start with registry defaults
     const base = {
@@ -7947,14 +7944,27 @@ const hydrateVessel = (registryShip, fleetEntry = null, telemetry = null) => {
         maxEnergy: config.baseEnergy,
         shields: 0,
         maxShields: 0,
+        armor: 0,
+        resistances: {},
+        combatStats: null,
+        combat_stats: null,
         fittings: { ...(config.fittings || {}) }
     };
 
     // 2. Overlay Fleet Entry (Persistence)
     if (fleetEntry) {
         base.hp = fleetEntry.hp ?? base.hp;
+        base.maxHp = fleetEntry.maxHp ?? fleetCombatStats?.maxHp ?? base.maxHp;
         base.energy = fleetEntry.energy ?? base.energy;
+        base.maxEnergy = fleetEntry.maxEnergy ?? fleetCombatStats?.maxEnergy ?? base.maxEnergy;
         base.shields = fleetEntry.shields ?? base.shields;
+        base.maxShields = fleetEntry.maxShields ?? fleetCombatStats?.maxShields ?? base.maxShields;
+        base.armor = (typeof fleetEntry.armor === 'number' ? fleetEntry.armor : (typeof fleetCombatStats?.armor === 'number' ? fleetCombatStats.armor : base.armor));
+        base.resistances = (fleetEntry.resistances && typeof fleetEntry.resistances === 'object')
+            ? { ...fleetEntry.resistances }
+            : ((fleetCombatStats?.resistances && typeof fleetCombatStats.resistances === 'object') ? { ...fleetCombatStats.resistances } : base.resistances);
+        base.combatStats = fleetCombatStats || base.combatStats;
+        base.combat_stats = fleetCombatStats || base.combat_stats;
         base.name = fleetEntry.name || base.name;
         
         // Merge fittings only for keys that exist in registry
@@ -7976,9 +7986,15 @@ const hydrateVessel = (registryShip, fleetEntry = null, telemetry = null) => {
         base.shields = telemetry.shields ?? stats.shields ?? base.shields;
         
         // Max stats can also be authoritative if they include bonuses from previous sessions
-        base.maxHp = telemetry.maxHp ?? stats.maxHp ?? base.maxHp;
-        base.maxEnergy = telemetry.maxEnergy ?? stats.maxEnergy ?? base.maxEnergy;
-        base.maxShields = telemetry.maxShields ?? stats.maxShields ?? base.maxShields;
+        base.maxHp = telemetry.maxHp ?? stats.maxHp ?? telemetryCombatStats?.maxHp ?? base.maxHp;
+        base.maxEnergy = telemetry.maxEnergy ?? stats.maxEnergy ?? telemetryCombatStats?.maxEnergy ?? base.maxEnergy;
+        base.maxShields = telemetry.maxShields ?? stats.maxShields ?? telemetryCombatStats?.maxShields ?? base.maxShields;
+        base.armor = (typeof telemetry.armor === 'number' ? telemetry.armor : (typeof telemetryCombatStats?.armor === 'number' ? telemetryCombatStats.armor : base.armor));
+        base.resistances = (telemetry.resistances && typeof telemetry.resistances === 'object')
+            ? { ...telemetry.resistances }
+            : ((telemetryCombatStats?.resistances && typeof telemetryCombatStats.resistances === 'object') ? { ...telemetryCombatStats.resistances } : base.resistances);
+        base.combatStats = telemetryCombatStats || base.combatStats;
+        base.combat_stats = telemetryCombatStats || base.combat_stats;
         
         // Merge fittings only for keys that exist in registry
         if (telemetry.fittings) {
@@ -8883,7 +8899,14 @@ useEffect(() => {
         const activeShipRecord = (gameState.ownedShips || []).find((ship) => ship && ship.id === gameState.activeShipId)
             || (gameState.hangarShips || []).find((ship) => ship && ship.id === gameState.activeShipId)
             || null;
-        const activeShipType = resolveShipId(gameState.shipClass || activeShipRecord?.type || gameState.activeShipId) || activeShipRecord?.type || null;
+        const activeShipType = getCanonicalShipId(
+            gameState.combatStats?.shipId,
+            gameState.combat_stats?.shipId,
+            activeShipRecord?.combatStats?.shipId,
+            activeShipRecord?.combat_stats?.shipId,
+            activeShipRecord?.type,
+            gameManagerRef.current?.ship?.type
+        ) || activeShipRecord?.type || null;
         const registryKey = resolveShipRegistryKey(activeShipType) || activeShipType;
         const registryConfig = (registryKey && SHIP_REGISTRY[registryKey]) || (activeShipType && SHIP_REGISTRY[activeShipType]) || null;
         const allowedSlotIds = Object.keys(registryConfig?.fittings || {});
@@ -12448,7 +12471,7 @@ backendSocket.sendUndock(
                     }
                 }, gameState.shipName.toUpperCase()),
 
-                getAuthoritativeShieldMax(gameState) > 0 ? React.createElement(BarRow, { color: '#00ccff', percent: (getAuthoritativeShieldValue(gameState) / getAuthoritativeShieldMax(gameState)) * 100, value: getAuthoritativeShieldValue(gameState), icon: React.createElement(IconShield) }) : null,
+                gameState.maxShields > 0 ? React.createElement(BarRow, { color: '#00ccff', percent: (gameState.shields / gameState.maxShields) * 100, value: gameState.shields, icon: React.createElement(IconShield) }) : null,
                 React.createElement(BarRow, { 
                     color: '#ff0000', 
                     percent: (gameState.hp / gameState.maxHp) * 100, 

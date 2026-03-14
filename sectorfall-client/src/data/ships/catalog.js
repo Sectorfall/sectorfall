@@ -794,6 +794,17 @@ export const SHIP_CATALOG = {
   }
 };
 
+
+const CANONICAL_PLAYER_SHIP_ID_MAP = {
+  "ship_omni_scout": "ship_omni_scout_t1",
+  "ship_omni_interceptor": "ship_omni_interceptor_t1",
+  "ship_omni_gunship": "ship_omni_gunship_t1",
+  "ship_omni_hauler": "ship_omni_hauler_t1",
+  "ship_omni_mining": "ship_omni_mining_ship_t1",
+  "ship_omni_command": "ship_omni_command_t1",
+  "ship_omni_sovereign": "ship_omni_sovereign_t1"
+};
+
 /**
  * Map legacy strings (registry keys, blueprint output ids, etc.) -> ship_id.
  */
@@ -824,40 +835,26 @@ export const SHIP_ID_ALIASES = {
   "bp_ship_omni_sovereign": "ship_omni_sovereign_t1"
 };
 
-const CANONICAL_PLAYER_SHIP_IDS = new Set([
-  "ship_omni_scout",
-  "ship_omni_interceptor",
-  "ship_omni_gunship",
-  "ship_omni_hauler",
-  "ship_omni_mining",
-  "ship_omni_command",
-  "ship_omni_sovereign"
-]);
-
-const CANONICAL_TEMPLATE_BY_SHIP_ID = {
-  ship_omni_scout: "ship_omni_scout_t1",
-  ship_omni_interceptor: "ship_omni_interceptor_t1",
-  ship_omni_gunship: "ship_omni_gunship_t1",
-  ship_omni_hauler: "ship_omni_hauler_t1",
-  ship_omni_mining: "ship_omni_mining_ship_t1",
-  ship_omni_command: "ship_omni_command_t1",
-  ship_omni_sovereign: "ship_omni_sovereign_t1"
-};
-
 export function resolveShipId(input) {
   if (!input) return null;
-  const key = String(input);
-  if (CANONICAL_PLAYER_SHIP_IDS.has(key)) return key;
+  const key = String(input).trim();
+  if (!key) return null;
   if (SHIP_CATALOG[key]) return key;
+  if (CANONICAL_PLAYER_SHIP_ID_MAP[key]) return key;
   if (SHIP_ID_ALIASES[key]) return SHIP_ID_ALIASES[key];
   return null;
 }
 
 export function resolveShipTemplate(input) {
-  const shipId = resolveShipId(input);
+  if (!input) return null;
+  const key = String(input).trim();
+  if (!key) return null;
+  if (SHIP_CATALOG[key]) return SHIP_CATALOG[key] || null;
+  const canonicalTemplateId = CANONICAL_PLAYER_SHIP_ID_MAP[key];
+  if (canonicalTemplateId) return SHIP_CATALOG[canonicalTemplateId] || null;
+  const shipId = resolveShipId(key);
   if (!shipId) return null;
-  if (SHIP_CATALOG[shipId]) return SHIP_CATALOG[shipId] || null;
-  const templateId = CANONICAL_TEMPLATE_BY_SHIP_ID[shipId] || shipId;
+  const templateId = CANONICAL_PLAYER_SHIP_ID_MAP[shipId] || shipId;
   return SHIP_CATALOG[templateId] || null;
 }
 
