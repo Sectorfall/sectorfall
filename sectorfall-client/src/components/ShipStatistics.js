@@ -205,34 +205,44 @@ export const aggregateShipStats = (ship, fittings) => {
     const authoritativeRes = (ship.resistances && typeof ship.resistances === 'object')
         ? ship.resistances
         : ((combatStats.resistances && typeof combatStats.resistances === 'object') ? combatStats.resistances : {});
-    const baseShipHP = typeof ship.maxHp === 'number'
-        ? ship.maxHp
-        : getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.hp === 'number' ? ship.hp : 0);
-    const finalHP = baseShipHP * (1 + hpBonus);
-    const shieldCapacity = typeof ship.maxShields === 'number'
-        ? ship.maxShields
-        : getAuthoritativeNumber(combatStats, ['maxShields', 'shieldCapacity'], typeof ship.shields === 'number' ? ship.shields : 0);
+    const maxHullHp = getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.maxHp === 'number' ? ship.maxHp : 0);
+    const currentHullHp = typeof ship.hp === 'number'
+        ? ship.hp
+        : getAuthoritativeNumber(combatStats, ['hp', 'currentHp'], maxHullHp);
+    const finalHullHp = maxHullHp * (1 + hpBonus);
+    const displayedHullHp = Math.min(finalHullHp, currentHullHp * (1 + hpBonus));
+    const shieldCapacity = getAuthoritativeNumber(combatStats, ['maxShields', 'shieldCapacity'], typeof ship.maxShields === 'number' ? ship.maxShields : (typeof ship.shields === 'number' ? ship.shields : 0));
+    const currentShields = typeof ship.shields === 'number'
+        ? ship.shields
+        : getAuthoritativeNumber(combatStats, ['shields', 'currentShields'], 0);
     const finalKinRes = (typeof ship.kineticRes === 'number' ? ship.kineticRes : Number(authoritativeRes.kinetic ?? 0)) + kinResBonus;
     const finalThermRes = (typeof ship.thermalRes === 'number' ? ship.thermalRes : Number(authoritativeRes.thermal ?? 0)) + thermResBonus;
     const finalBlastRes = (typeof ship.blastRes === 'number' ? ship.blastRes : Number(authoritativeRes.blast ?? 0)) + blastResBonus;
 
     const avgRes = (finalKinRes + finalThermRes + finalBlastRes) / 3;
-    const ehp = (finalHP + shieldCapacity) / Math.max(0.01, 1 - avgRes);
+    const currentEhp = (displayedHullHp + currentShields) / Math.max(0.01, 1 - avgRes);
 
     // Shield restoration stats (aggregated from fittings)
-    const baseShieldRegen = Object.values(shipFittings).reduce((sum, m) => sum + (m?.type === 'shield' ? (m.rechargeRate || 0) : 0), 0);
-    const baseShieldDelay = Object.values(shipFittings).reduce((sum, m) => m?.type === 'shield' ? (m.rechargeDelay || 5) : sum, 5);
-    
-    const finalShieldRegen = baseShieldRegen * (1 + shieldRegenBonus);
-    const finalShieldDelay = Math.max(0.5, baseShieldDelay * (2 - (1 + shieldDelayBonus))); 
+    const shieldModuleStats = Object.values(shipFittings).reduce((acc, module) => {
+        if (!module || String(module.type || '').toLowerCase() !== 'shield') return acc;
+        const effectiveModule = module.final_stats ? module : hydrateItem(module);
+        const stats = getShieldModuleStats(effectiveModule || module) || {};
+        acc.regen += Number(stats.regen ?? effectiveModule?.final_stats?.regen ?? effectiveModule?.final_stats?.shieldRegen ?? 0);
+        const delayCandidate = Number(module.rechargeDelay ?? module.recharge_delay ?? effectiveModule?.final_stats?.rechargeDelay ?? effectiveModule?.final_stats?.recharge_delay ?? 5);
+        if (Number.isFinite(delayCandidate)) acc.delay = Math.min(acc.delay, delayCandidate);
+        return acc;
+    }, { regen: 0, delay: 5 });
+
+    const finalShieldRegen = shieldModuleStats.regen * (1 + shieldRegenBonus);
+    const finalShieldDelay = Math.max(0.5, shieldModuleStats.delay * (2 - (1 + shieldDelayBonus))); 
 
     return {
         shipConfig,
         hull: {
-            current: finalHP,
-            max: getAuthoritativeNumber(combatStats, ['maxHp', 'hull_base'], typeof ship.maxHp === 'number' ? ship.maxHp : 0) * (1 + hpBonus),
+            current: displayedHullHp,
+            max: finalHullHp,
             armor: ((typeof ship.armor === 'number' ? ship.armor : getAuthoritativeNumber(combatStats, ['armor'], 0)) * 100),
-            ehp
+            ehp: currentEhp
         },
         resists: {
             kinetic: finalKinRes,

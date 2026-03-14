@@ -78,18 +78,6 @@ const getShipClassLabel = (shipTypeOrId) => {
   return String(candidate).toUpperCase();
 };
 
-const getCanonicalShipId = (...candidates) => {
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const raw = String(candidate).trim();
-    if (!raw) continue;
-    if (raw.toLowerCase().startsWith('ship_')) return raw;
-    const resolved = resolveShipId(raw);
-    if (resolved) return resolved;
-  }
-  return null;
-};
-
 const FleetHUD = ({ fleet, remotePlayers, userId, onTargetMember, onLeaveFleet, onKickMember }) => {
     const { offset, isDragging, dragProps } = useDraggable();
 
@@ -6305,13 +6293,7 @@ const StationInterior = ({
     const selectedShipIsActive = Boolean(selectedShip && selectedShip.id === gameState.activeShipId);
     const telemetryShip = selectedShip ? (selectedShipIsActive ? {
         ...selectedShip,
-        type: getCanonicalShipId(
-            gameState.combatStats?.shipId,
-            gameState.combat_stats?.shipId,
-            selectedShip.combatStats?.shipId,
-            selectedShip.combat_stats?.shipId,
-            selectedShip.type
-        ) || selectedShip.type,
+        type: resolveShipId(gameState.combatStats?.shipId || gameState.combat_stats?.shipId || selectedShip.type) || selectedShip.type,
         hp: numOr(gameState.hp, numOr(selectedShip.hp, 0)),
         maxHp: numOr(gameState.maxHp, numOr(selectedShip.maxHp, numOr(selectedShip.hp, 0))),
         shields: numOr(gameState.shields, numOr(selectedShip.shields, 0)),
@@ -6325,11 +6307,7 @@ const StationInterior = ({
         fittings: gameState.fittings || selectedShip.fittings || {}
     } : {
         ...selectedShip,
-        type: getCanonicalShipId(
-            selectedShip.combatStats?.shipId,
-            selectedShip.combat_stats?.shipId,
-            selectedShip.type
-        ) || selectedShip.type,
+        type: resolveShipId(selectedShip.type) || selectedShip.type,
         armor: 0,
         resistances: {},
         combat_stats: null,
@@ -6969,7 +6947,7 @@ const ShipMenu = ({ gameState, onClose, onSelectSlot }) => {
     const hasAnyModules = Object.values(gameState.fittings).some(f => f !== null);
     
     const activeShip = gameState.ownedShips.find(s => s.id === gameState.activeShipId);
-    const activeShipType = resolveShipId(gameState.combatStats?.shipId || activeShip?.type || gameState.shipClass || gameState.activeShipId) || activeShip?.type || gameState.shipClass || gameState.activeShipId;
+    const activeShipType = resolveShipId(gameState.combatStats?.shipId || gameState.combat_stats?.shipId || activeShip?.type || gameState.shipClass || gameState.activeShipId) || activeShip?.type || gameState.shipClass || gameState.activeShipId;
     const shipRegistryKey = resolveShipRegistryKey(activeShipType) || activeShipType;
     const shipConfig = SHIP_REGISTRY[shipRegistryKey] || SHIP_REGISTRY[activeShipType];
     const spriteUrl = shipConfig?.spriteUrl || 'https://rosebud.ai/assets/spaceship.png.webp?6ILm';
@@ -7921,14 +7899,7 @@ const SAFE_DEFAULT_FITTINGS = {
  * 3. Real-time Telemetry (Latest HP/Energy/Fittings)
  */
 const hydrateVessel = (registryShip, fleetEntry = null, telemetry = null) => {
-    const registryKey = resolveShipRegistryKey(registryShip?.type) || registryShip?.type;
-    const config = SHIP_REGISTRY[registryKey] || SHIP_REGISTRY[registryShip?.type] || SHIP_REGISTRY['OMNI SCOUT'];
-    const fleetCombatStats = (fleetEntry?.combatStats && typeof fleetEntry.combatStats === 'object')
-        ? fleetEntry.combatStats
-        : ((fleetEntry?.combat_stats && typeof fleetEntry.combat_stats === 'object') ? fleetEntry.combat_stats : null);
-    const telemetryCombatStats = (telemetry?.combatStats && typeof telemetry.combatStats === 'object')
-        ? telemetry.combatStats
-        : ((telemetry?.combat_stats && typeof telemetry.combat_stats === 'object') ? telemetry.combat_stats : null);
+    const config = SHIP_REGISTRY[registryShip.type] || SHIP_REGISTRY['OMNI SCOUT'];
     
     // 1. Start with registry defaults
     const base = {
@@ -7944,27 +7915,14 @@ const hydrateVessel = (registryShip, fleetEntry = null, telemetry = null) => {
         maxEnergy: config.baseEnergy,
         shields: 0,
         maxShields: 0,
-        armor: 0,
-        resistances: {},
-        combatStats: null,
-        combat_stats: null,
         fittings: { ...(config.fittings || {}) }
     };
 
     // 2. Overlay Fleet Entry (Persistence)
     if (fleetEntry) {
         base.hp = fleetEntry.hp ?? base.hp;
-        base.maxHp = fleetEntry.maxHp ?? fleetCombatStats?.maxHp ?? base.maxHp;
         base.energy = fleetEntry.energy ?? base.energy;
-        base.maxEnergy = fleetEntry.maxEnergy ?? fleetCombatStats?.maxEnergy ?? base.maxEnergy;
         base.shields = fleetEntry.shields ?? base.shields;
-        base.maxShields = fleetEntry.maxShields ?? fleetCombatStats?.maxShields ?? base.maxShields;
-        base.armor = (typeof fleetEntry.armor === 'number' ? fleetEntry.armor : (typeof fleetCombatStats?.armor === 'number' ? fleetCombatStats.armor : base.armor));
-        base.resistances = (fleetEntry.resistances && typeof fleetEntry.resistances === 'object')
-            ? { ...fleetEntry.resistances }
-            : ((fleetCombatStats?.resistances && typeof fleetCombatStats.resistances === 'object') ? { ...fleetCombatStats.resistances } : base.resistances);
-        base.combatStats = fleetCombatStats || base.combatStats;
-        base.combat_stats = fleetCombatStats || base.combat_stats;
         base.name = fleetEntry.name || base.name;
         
         // Merge fittings only for keys that exist in registry
@@ -7986,15 +7944,9 @@ const hydrateVessel = (registryShip, fleetEntry = null, telemetry = null) => {
         base.shields = telemetry.shields ?? stats.shields ?? base.shields;
         
         // Max stats can also be authoritative if they include bonuses from previous sessions
-        base.maxHp = telemetry.maxHp ?? stats.maxHp ?? telemetryCombatStats?.maxHp ?? base.maxHp;
-        base.maxEnergy = telemetry.maxEnergy ?? stats.maxEnergy ?? telemetryCombatStats?.maxEnergy ?? base.maxEnergy;
-        base.maxShields = telemetry.maxShields ?? stats.maxShields ?? telemetryCombatStats?.maxShields ?? base.maxShields;
-        base.armor = (typeof telemetry.armor === 'number' ? telemetry.armor : (typeof telemetryCombatStats?.armor === 'number' ? telemetryCombatStats.armor : base.armor));
-        base.resistances = (telemetry.resistances && typeof telemetry.resistances === 'object')
-            ? { ...telemetry.resistances }
-            : ((telemetryCombatStats?.resistances && typeof telemetryCombatStats.resistances === 'object') ? { ...telemetryCombatStats.resistances } : base.resistances);
-        base.combatStats = telemetryCombatStats || base.combatStats;
-        base.combat_stats = telemetryCombatStats || base.combat_stats;
+        base.maxHp = telemetry.maxHp ?? stats.maxHp ?? base.maxHp;
+        base.maxEnergy = telemetry.maxEnergy ?? stats.maxEnergy ?? base.maxEnergy;
+        base.maxShields = telemetry.maxShields ?? stats.maxShields ?? base.maxShields;
         
         // Merge fittings only for keys that exist in registry
         if (telemetry.fittings) {
@@ -8170,6 +8122,10 @@ const startBattlegroundWaveCountdown = (waveNumber = 0, seconds = 5) => {
                 clearInterval(battlegroundWaveCountdownTimerRef.current);
                 battlegroundWaveCountdownTimerRef.current = null;
             }
+            if (sceneTransitionHideTimerRef.current) {
+                clearTimeout(sceneTransitionHideTimerRef.current);
+                sceneTransitionHideTimerRef.current = null;
+            }
             setBattlegroundWaveCountdown(null);
             return;
         }
@@ -8323,6 +8279,8 @@ const handleEnterArena = () => {
     const battlegroundFailTimerRef = useRef(null);
     const battlegroundExtractPhaseTimerRef = useRef(null);
     const [battlegroundExtractState, setBattlegroundExtractState] = useState(null);
+    const [sceneTransitionOverlay, setSceneTransitionOverlay] = useState(null);
+    const sceneTransitionHideTimerRef = useRef(null);
     const loadingStepQueueRef = useRef(Promise.resolve());
     const loadingStepTimerRefs = useRef([]);
     const loadingSequenceStartedAtRef = useRef(0);
@@ -8376,6 +8334,28 @@ const handleEnterArena = () => {
             loadingStepQueueRef.current,
             new Promise(resolve => setTimeout(resolve, remaining))
         ]);
+    }, []);
+
+    const showSceneTransitionOverlay = useCallback((title = 'TRANSITION') => {
+        if (sceneTransitionHideTimerRef.current) {
+            clearTimeout(sceneTransitionHideTimerRef.current);
+            sceneTransitionHideTimerRef.current = null;
+        }
+        setSceneTransitionOverlay({ title: String(title || 'TRANSITION').toUpperCase(), startedAt: Date.now() });
+    }, []);
+
+    const hideSceneTransitionOverlay = useCallback((minVisibleMs = 650) => {
+        setSceneTransitionOverlay(prev => {
+            if (!prev) return prev;
+            const elapsed = Date.now() - (prev.startedAt || Date.now());
+            const remaining = Math.max(0, minVisibleMs - elapsed);
+            if (sceneTransitionHideTimerRef.current) clearTimeout(sceneTransitionHideTimerRef.current);
+            sceneTransitionHideTimerRef.current = setTimeout(() => {
+                setSceneTransitionOverlay(null);
+                sceneTransitionHideTimerRef.current = null;
+            }, remaining);
+            return prev;
+        });
     }, []);
 
     useEffect(() => {
@@ -8798,62 +8778,27 @@ useEffect(() => {
         const hasExplicitActiveShipField = Object.prototype.hasOwnProperty.call(detail, 'active_ship_id');
         const nextActiveShipId = isPersistableShipId(detail.active_ship_id) ? detail.active_ship_id : null;
         const clearActiveShip = hasExplicitActiveShipField && !nextActiveShipId && !activeShipStats;
-        setGameState(prev => {
-            const effectiveActiveShipId = hasExplicitActiveShipField ? nextActiveShipId : prev.activeShipId;
-            const patchOwnedShip = (ship) => {
-                if (!ship || ship.id !== effectiveActiveShipId) return ship;
-                return {
-                    ...ship,
-                    type: activeShipCombatStats?.shipId || ship.type,
-                    ship_id: activeShipCombatStats?.shipId || ship.ship_id,
-                    ship_type: activeShipCombatStats?.shipId || ship.ship_type,
-                    hp: clearActiveShip ? 0 : (typeof activeShipStats?.hp === 'number' ? activeShipStats.hp : ship.hp),
-                    maxHp: clearActiveShip ? 0 : (typeof activeShipStats?.maxHp === 'number' ? activeShipStats.maxHp : (typeof activeShipCombatStats?.maxHp === 'number' ? activeShipCombatStats.maxHp : ship.maxHp)),
-                    shields: clearActiveShip ? 0 : (typeof activeShipStats?.shields === 'number' ? activeShipStats.shields : ship.shields),
-                    maxShields: clearActiveShip ? 0 : (typeof activeShipStats?.maxShields === 'number' ? activeShipStats.maxShields : (typeof activeShipCombatStats?.maxShields === 'number' ? activeShipCombatStats.maxShields : ship.maxShields)),
-                    energy: clearActiveShip ? 0 : (typeof activeShipStats?.energy === 'number' ? activeShipStats.energy : ship.energy),
-                    maxEnergy: clearActiveShip ? 0 : (typeof activeShipStats?.maxEnergy === 'number' ? activeShipStats.maxEnergy : (typeof activeShipCombatStats?.maxEnergy === 'number' ? activeShipCombatStats.maxEnergy : ship.maxEnergy)),
-                    armor: clearActiveShip ? 0 : (typeof activeShipStats?.armor === 'number' ? activeShipStats.armor : (typeof activeShipCombatStats?.armor === 'number' ? activeShipCombatStats.armor : ship.armor)),
-                    resistances: clearActiveShip ? {} : (activeShipStats?.resistances && typeof activeShipStats.resistances === 'object' ? activeShipStats.resistances : ship.resistances),
-                    combatStats: clearActiveShip ? null : (activeShipCombatStats || ship.combatStats),
-                    fittings: clearActiveShip ? {} : (activeShipFittings || ship.fittings)
-                };
-            };
-            return {
-                ...prev,
-                credits: typeof detail.credits === 'number' ? detail.credits : prev.credits,
-                experience: typeof detail.experience === 'number' ? detail.experience : prev.experience,
-                level: typeof detail.level === 'number' ? detail.level : prev.level,
-                commanderName: nextCommanderName || prev.commanderName,
-                activeShipId: effectiveActiveShipId,
-                hp: clearActiveShip ? 0 : (typeof activeShipStats?.hp === 'number' ? activeShipStats.hp : prev.hp),
-                maxHp: clearActiveShip ? 0 : (typeof activeShipStats?.maxHp === 'number' ? activeShipStats.maxHp : (typeof activeShipCombatStats?.maxHp === 'number' ? activeShipCombatStats.maxHp : prev.maxHp)),
-                shields: clearActiveShip ? 0 : (typeof activeShipStats?.shields === 'number' ? activeShipStats.shields : prev.shields),
-                maxShields: clearActiveShip ? 0 : (typeof activeShipStats?.maxShields === 'number' ? activeShipStats.maxShields : (typeof activeShipCombatStats?.maxShields === 'number' ? activeShipCombatStats.maxShields : prev.maxShields)),
-                energy: clearActiveShip ? 0 : (typeof activeShipStats?.energy === 'number' ? activeShipStats.energy : prev.energy),
-                maxEnergy: clearActiveShip ? 0 : (typeof activeShipStats?.maxEnergy === 'number' ? activeShipStats.maxEnergy : (typeof activeShipCombatStats?.maxEnergy === 'number' ? activeShipCombatStats.maxEnergy : prev.maxEnergy)),
-                armor: clearActiveShip ? 0 : (typeof activeShipStats?.armor === 'number' ? activeShipStats.armor : (typeof activeShipCombatStats?.armor === 'number' ? activeShipCombatStats.armor : prev.armor)),
-                resistances: clearActiveShip ? {} : (activeShipStats?.resistances && typeof activeShipStats.resistances === 'object' ? activeShipStats.resistances : prev.resistances),
-                combatStats: clearActiveShip ? null : (activeShipCombatStats || prev.combatStats),
-                fittings: clearActiveShip ? {} : (activeShipFittings || prev.fittings),
-                ownedShips: Array.isArray(prev.ownedShips) ? prev.ownedShips.map(patchOwnedShip) : prev.ownedShips,
-                hangarShips: Array.isArray(prev.hangarShips) ? prev.hangarShips.map(patchOwnedShip) : prev.hangarShips,
-                inventory: clearActiveShip ? [] : prev.inventory,
-                currentCargoWeight: clearActiveShip ? 0 : prev.currentCargoWeight,
-                currentCargoVolume: clearActiveShip ? 0 : prev.currentCargoVolume
-            };
-        });
-
-        console.log('[CommanderState][ActiveShipSync]', {
-            docked: !!isDocked,
-            activeShipId: nextActiveShipId,
-            activeShipCombatShipId: activeShipCombatStats?.shipId || null,
-            activeShipHp: activeShipStats?.hp,
-            activeShipMaxHp: activeShipStats?.maxHp ?? activeShipCombatStats?.maxHp,
-            activeShipShields: activeShipStats?.shields,
-            activeShipMaxShields: activeShipStats?.maxShields ?? activeShipCombatStats?.maxShields,
-            fittings: activeShipFittings
-        });
+        setGameState(prev => ({
+            ...prev,
+            credits: typeof detail.credits === 'number' ? detail.credits : prev.credits,
+            experience: typeof detail.experience === 'number' ? detail.experience : prev.experience,
+            level: typeof detail.level === 'number' ? detail.level : prev.level,
+            commanderName: nextCommanderName || prev.commanderName,
+            activeShipId: hasExplicitActiveShipField ? nextActiveShipId : prev.activeShipId,
+            hp: clearActiveShip ? 0 : (typeof activeShipStats?.hp === 'number' ? activeShipStats.hp : prev.hp),
+            maxHp: clearActiveShip ? 0 : (typeof activeShipStats?.maxHp === 'number' ? activeShipStats.maxHp : (typeof activeShipCombatStats?.maxHp === 'number' ? activeShipCombatStats.maxHp : prev.maxHp)),
+            shields: clearActiveShip ? 0 : (typeof activeShipStats?.shields === 'number' ? activeShipStats.shields : prev.shields),
+            maxShields: clearActiveShip ? 0 : (typeof activeShipStats?.maxShields === 'number' ? activeShipStats.maxShields : (typeof activeShipCombatStats?.maxShields === 'number' ? activeShipCombatStats.maxShields : prev.maxShields)),
+            energy: clearActiveShip ? 0 : (typeof activeShipStats?.energy === 'number' ? activeShipStats.energy : prev.energy),
+            maxEnergy: clearActiveShip ? 0 : (typeof activeShipStats?.maxEnergy === 'number' ? activeShipStats.maxEnergy : (typeof activeShipCombatStats?.maxEnergy === 'number' ? activeShipCombatStats.maxEnergy : prev.maxEnergy)),
+            armor: clearActiveShip ? 0 : (typeof activeShipStats?.armor === 'number' ? activeShipStats.armor : (typeof activeShipCombatStats?.armor === 'number' ? activeShipCombatStats.armor : prev.armor)),
+            resistances: clearActiveShip ? {} : (activeShipStats?.resistances && typeof activeShipStats.resistances === 'object' ? activeShipStats.resistances : prev.resistances),
+            combatStats: clearActiveShip ? null : (activeShipCombatStats || prev.combatStats),
+            fittings: clearActiveShip ? {} : (activeShipFittings || prev.fittings),
+            inventory: clearActiveShip ? [] : prev.inventory,
+            currentCargoWeight: clearActiveShip ? 0 : prev.currentCargoWeight,
+            currentCargoVolume: clearActiveShip ? 0 : prev.currentCargoVolume
+        }));
 
         if (clearActiveShip && gameManagerRef.current) {
             if (gameManagerRef.current.stats) {
@@ -8929,51 +8874,12 @@ useEffect(() => {
     return () => window.removeEventListener('sectorfall:commander_state', onCommanderState);
 }, []);
 
-
-useEffect(() => {
-    const activeShip = gameState.ownedShips.find(s => s && s.id === gameState.activeShipId)
-        || gameState.hangarShips.find(s => s && s.id === gameState.activeShipId)
-        || null;
-    if (isDocked) {
-        console.log('[ShipDisplay][StarportUI]', {
-            activeShipId: gameState.activeShipId || null,
-            displayedShipName: activeShip?.name || gameState.shipName || null,
-            displayedShipType: activeShip?.type || activeShip?.ship_type || activeShip?.ship_id || null,
-            topLevelCombatShipId: gameState.combatStats?.shipId || null,
-            topLevelHp: gameState.hp,
-            topLevelMaxHp: gameState.maxHp,
-            topLevelShields: gameState.shields,
-            topLevelMaxShields: gameState.maxShields,
-            fittedSlots: gameState.fittings
-        });
-    } else {
-        console.log('[ShipDisplay][SpaceFlight]', {
-            activeShipId: gameState.activeShipId || null,
-            currentLiveShipType: gameManagerRef.current?.ship?.type || null,
-            gmCombatShipId: gameManagerRef.current?.stats?.combatStats?.shipId || gameManagerRef.current?.ship?.combatStats?.shipId || null,
-            topLevelCombatShipId: gameState.combatStats?.shipId || null,
-            topLevelHp: gameState.hp,
-            topLevelMaxHp: gameState.maxHp,
-            topLevelShields: gameState.shields,
-            topLevelMaxShields: gameState.maxShields,
-            fittedSlots: gameState.fittings
-        });
-    }
-}, [isDocked, gameState.activeShipId, gameState.shipName, gameState.hp, gameState.maxHp, gameState.shields, gameState.maxShields, gameState.combatStats, gameState.fittings, gameState.ownedShips, gameState.hangarShips]);
-
 useEffect(() => {
     const sanitizeAuthoritativeFittings = (...candidates) => {
         const activeShipRecord = (gameState.ownedShips || []).find((ship) => ship && ship.id === gameState.activeShipId)
             || (gameState.hangarShips || []).find((ship) => ship && ship.id === gameState.activeShipId)
             || null;
-        const activeShipType = getCanonicalShipId(
-            gameState.combatStats?.shipId,
-            gameState.combat_stats?.shipId,
-            activeShipRecord?.combatStats?.shipId,
-            activeShipRecord?.combat_stats?.shipId,
-            activeShipRecord?.type,
-            gameManagerRef.current?.ship?.type
-        ) || activeShipRecord?.type || null;
+        const activeShipType = resolveShipId(gameState.combatStats?.shipId || gameState.combat_stats?.shipId || gameState.shipClass || activeShipRecord?.type || gameState.activeShipId) || activeShipRecord?.type || null;
         const registryKey = resolveShipRegistryKey(activeShipType) || activeShipType;
         const registryConfig = (registryKey && SHIP_REGISTRY[registryKey]) || (activeShipType && SHIP_REGISTRY[activeShipType]) || null;
         const allowedSlotIds = Object.keys(registryConfig?.fittings || {});
@@ -9685,6 +9591,14 @@ hideSpaceScene: function () {
   gameManager.setDocked(true);
 },
 
+showSceneTransitionOverlay: function (title) {
+  showSceneTransitionOverlay(title);
+},
+
+hideSceneTransitionOverlay: function (minVisibleMs) {
+  hideSceneTransitionOverlay(minVisibleMs);
+},
+
 showStarportUI: function (starportId) {
   // keep this early so hideSpaceScene can fall back to it
   window.game.lastStarportId = starportId;
@@ -9693,6 +9607,7 @@ showStarportUI: function (starportId) {
   // UI only here. DOCK is sent from the actual docking interaction path.
   setIsDocked(true);
   gameManager.setDocked(true);
+  hideSceneTransitionOverlay(700);
 },
 
   spawnRemoteShip: function (userId, x, y, rot) {
@@ -10367,19 +10282,6 @@ showStarportUI: function (starportId) {
         }
 
         try {
-            console.log('[FITTING][INSTALL][REQUEST]', {
-                slotId: activeFittingSlot?.id,
-                itemId: item?.id,
-                itemName: item?.name,
-                source: item?.location === 'storage' ? 'storage' : 'ship',
-                starportId,
-                shipId: gameState?.shipId,
-                maxShields: gameState?.maxShields,
-                shields: gameState?.shields,
-                combat_stats: gameState?.combat_stats || gameState?.combatStats,
-                fittings: gameState?.fittings
-            });
-
             const result = await backendSocket.requestCommanderFitting({
                 action: 'install',
                 starportId,
@@ -10397,43 +10299,12 @@ showStarportUI: function (starportId) {
                 return;
             }
 
-            console.log('[FITTING][BACKEND_RESULT]', {
-                action: 'install',
-                starportId,
+            setGameState(prev => applyAuthoritativeFittingResult(prev, {
                 result,
-                currentState: {
-                    shipId: gameState?.shipId,
-                    maxShields: gameState?.maxShields,
-                    shields: gameState?.shields,
-                    combat_stats: gameState?.combat_stats || gameState?.combatStats,
-                    fittings: gameState?.fittings
-                }
-            });
-
-            setGameState(prev => {
-                try {
-                    const next = applyAuthoritativeFittingResult(prev, {
-                        result,
-                        starportId,
-                        hydrateItem,
-                        hydrateVessel,
-                        gameManager: gameManagerRef.current
-                    });
-
-                    console.log('[FITTING][INSTALL][CLIENT_APPLY]', {
-                        shipId: next?.shipId || prev?.shipId,
-                        maxShields: next?.maxShields,
-                        shields: next?.shields,
-                        combat_stats: next?.combat_stats || next?.combatStats,
-                        fittings: next?.fittings
-                    });
-
-                    return next && typeof next === 'object' ? next : prev;
-                } catch (applyError) {
-                    console.error('[FITTING][INSTALL][CLIENT_APPLY_ERROR]', applyError, { prev, result, starportId });
-                    return prev;
-                }
-            });
+                starportId,
+                hydrateItem,
+                hydrateVessel
+            }));
 
             setActiveFittingSlot(null);
             showNotification(`${item.name} installed successfully.`, 'info');
@@ -10468,16 +10339,6 @@ showStarportUI: function (starportId) {
         }
 
         try {
-            console.log('[FITTING][UNFIT][REQUEST]', {
-                slotId,
-                starportId,
-                shipId: gameState?.shipId,
-                maxShields: gameState?.maxShields,
-                shields: gameState?.shields,
-                combat_stats: gameState?.combat_stats || gameState?.combatStats,
-                fittings: gameState?.fittings
-            });
-
             const result = await backendSocket.requestCommanderFitting({
                 action: 'unfit',
                 starportId,
@@ -10492,43 +10353,12 @@ showStarportUI: function (starportId) {
                 return;
             }
 
-            console.log('[FITTING][BACKEND_RESULT]', {
-                action: 'unfit',
-                starportId,
+            setGameState(prev => applyAuthoritativeFittingResult(prev, {
                 result,
-                currentState: {
-                    shipId: gameState?.shipId,
-                    maxShields: gameState?.maxShields,
-                    shields: gameState?.shields,
-                    combat_stats: gameState?.combat_stats || gameState?.combatStats,
-                    fittings: gameState?.fittings
-                }
-            });
-
-            setGameState(prev => {
-                try {
-                    const next = applyAuthoritativeFittingResult(prev, {
-                        result,
-                        starportId,
-                        hydrateItem,
-                        hydrateVessel,
-                        gameManager: gameManagerRef.current
-                    });
-
-                    console.log('[FITTING][UNFIT][CLIENT_APPLY]', {
-                        shipId: next?.shipId || prev?.shipId,
-                        maxShields: next?.maxShields,
-                        shields: next?.shields,
-                        combat_stats: next?.combat_stats || next?.combatStats,
-                        fittings: next?.fittings
-                    });
-
-                    return next && typeof next === 'object' ? next : prev;
-                } catch (applyError) {
-                    console.error('[FITTING][UNFIT][CLIENT_APPLY_ERROR]', applyError, { prev, result, starportId });
-                    return prev;
-                }
-            });
+                starportId,
+                hydrateItem,
+                hydrateVessel
+            }));
 
             setActiveFittingSlot(null);
             showNotification('Module uninstalled to ship cargo.', 'info');
@@ -11593,6 +11423,7 @@ if (gameState.shipName === "PENDING" || gameState.activeShipId === "PENDING") {
     }
 
     // 🚀 SEND UNDOCK TO SERVER
+    showSceneTransitionOverlay('UNDOCKING');
 // Prevent a 0,0 / starport-exit frame before the server's WELCOME arrives
 backendSocket.awaitingSpawn = true;
 try { if (gameManagerRef.current?.ship?.sprite) gameManagerRef.current.ship.sprite.visible = false; } catch (e) {}
@@ -12885,6 +12716,13 @@ backendSocket.sendUndock(
                 setShowStarMap(false);
                 setIsLeapMode(false);
             }
+        }),
+        sceneTransitionOverlay && React.createElement(LoadingScreen, {
+            fadeOut: false,
+            steps: [],
+            title: sceneTransitionOverlay.title,
+            footerLabel: sceneTransitionOverlay.title === 'DOCKING' ? 'SYNCHRONIZING STARPORT ACCESS' : 'SYNCHRONIZING FLIGHT CONTROL',
+            staticTitle: true
         }),
         showLoading && React.createElement(LoadingScreen, {
             fadeOut: loadingFadeOut,
