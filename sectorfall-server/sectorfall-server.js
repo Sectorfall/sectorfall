@@ -4579,6 +4579,57 @@ async function persistActiveShipToHangar(player, vitalsOverride = null) {
   }
 }
 
+function clearPlayerActiveShipRuntime(player) {
+  if (!player) return;
+  player.active_ship_instance_id = null;
+  player.current_ship_instance_id = null;
+  player.ship_type = null;
+  player.fittings = sanitizeRuntimeFittings({}, null);
+  player.visual_config = sanitizeRuntimeVisualConfig(null);
+  player.combatStats = null;
+  player.armor = 0;
+  player.resistances = {};
+  player.hp = 0;
+  player.maxHp = 0;
+  player.shields = 0;
+  player.maxShields = 0;
+  player.energy = 0;
+  player.maxEnergy = 0;
+  player._fittingsSignature = computeFittingsSignature(player.fittings);
+}
+
+async function destroyCommanderActiveShip(player, { reason = 'ship_destroyed' } = {}) {
+  if (!player?.userId) return { ok: false, error: 'invalid_player' };
+
+  const commander = await loadCommanderDataRow(player.userId);
+  const activeShipId = String(commander?.active_ship_id || player?.active_ship_instance_id || player?.current_ship_instance_id || '').trim();
+
+  if (activeShipId) {
+    const { error: deleteHangarError } = await supabase
+      .from('hangar_states')
+      .delete()
+      .eq('player_id', player.userId)
+      .eq('ship_id', activeShipId);
+    if (deleteHangarError) {
+      console.warn('[Backend] Failed to delete destroyed hangar ship:', player.userId, activeShipId, deleteHangarError.message);
+      return { ok: false, error: deleteHangarError.message || 'delete_destroyed_ship_failed' };
+    }
+  }
+
+  const { error: clearCommanderError } = await supabase
+    .from('commander_data')
+    .upsert({ id: player.userId, active_ship_id: null, updated_at: nowIso() }, { onConflict: 'id' });
+
+  if (clearCommanderError) {
+    console.warn('[Backend] Failed to clear commander active_ship_id after destruction:', player.userId, clearCommanderError.message);
+    return { ok: false, error: clearCommanderError.message || 'clear_active_ship_failed' };
+  }
+
+  clearPlayerActiveShipRuntime(player);
+  console.log(`[Commander][Respawn] Cleared destroyed active ship user=${player.userId} shipId=${activeShipId || 'null'} reason=${reason}`);
+  return { ok: true, activeShipId: activeShipId || null };
+}
+
 async function addShipToCommanderHangar(playerId, starportId, shipObj) {
   const normalizedStarportId = normalizeStarportId(starportId);
   const resolvedShipId = normalizeCanonicalShipId(
@@ -6204,7 +6255,8 @@ async function sendCommanderState(socket, userId, requestId = null) {
 
   let activeShipStats = null;
   const runtimePlayer = runtimePlayerRef?.player || null;
-  if (runtimePlayer) {
+  const commanderActiveShipId = String(commander?.active_ship_id || '').trim();
+  if (runtimePlayer && commanderActiveShipId) {
     const hydrated = applyHydratedPlayerCombatStats(runtimePlayer, { preserveCurrent: true });
     activeShipStats = {
       hp: runtimePlayer.hp,
@@ -7970,7 +8022,10 @@ async function handleHello(socket, data) {
       validatedLock: null
     });
 
-    await hydratePlayerFromCommanderActiveShip(players.get(socket), { fillVitals: true, persistState: false });
+    const dockedHydratedShip = await hydratePlayerFromCommanderActiveShip(players.get(socket), { fillVitals: true, persistState: false });
+    if (!dockedHydratedShip) {
+      clearPlayerActiveShipRuntime(players.get(socket));
+    }
 
     console.log(`[Backend] ${userId} is docked at ${persistedStarportId}`);
 
@@ -10271,6 +10326,12 @@ function buildDockedRespawnTelemetry(starportId) {
 async function finalizeHomeStarportRespawn(player, requestedStarportId) {
   if (!player?.userId) return { ok: false, error: 'invalid_player' };
 
+  const wasDestroyed = !!player.destroyed || finiteNum(player?.hp, 0) <= 0;
+  if (wasDestroyed) {
+    const destroyResult = await destroyCommanderActiveShip(player, { reason: 'respawn_home' });
+    if (!destroyResult.ok) return destroyResult;
+  }
+
   const starport_id = normalizeStarportId(requestedStarportId) || normalizeStarportId('cygnus_prime_starport');
   const system_id = resolveSystemIdForStarport(starport_id);
   const telemetry = buildDockedRespawnTelemetry(starport_id);
@@ -10287,20 +10348,23 @@ async function finalizeHomeStarportRespawn(player, requestedStarportId) {
   player.lastSpaceTelemetry = telemetry;
   clearValidatedLock(player);
 
-  await hydratePlayerFromCommanderActiveShip(player, { fillVitals: true, persistState: false });
+  const hydratedShip = await hydratePlayerFromCommanderActiveShip(player, { fillVitals: true, persistState: false });
+  if (!hydratedShip) {
+    clearPlayerActiveShipRuntime(player);
+  }
 
   const payload = {
     player_id: player.userId,
-    ship_type: player.ship_type || 'ship_omni_scout',
+    ship_type: player.ship_type || null,
     system_id,
     starport_id,
     telemetry,
-    hull: typeof player.hp === 'number' ? player.hp : undefined,
-    maxHp: typeof player.maxHp === 'number' ? player.maxHp : undefined,
-    shields: typeof player.shields === 'number' ? player.shields : undefined,
-    maxShields: typeof player.maxShields === 'number' ? player.maxShields : undefined,
-    energy: typeof player.energy === 'number' ? player.energy : undefined,
-    maxEnergy: typeof player.maxEnergy === 'number' ? player.maxEnergy : undefined,
+    hull: typeof player.hp === 'number' ? player.hp : 0,
+    maxHp: typeof player.maxHp === 'number' ? player.maxHp : 0,
+    shields: typeof player.shields === 'number' ? player.shields : 0,
+    maxShields: typeof player.maxShields === 'number' ? player.maxShields : 0,
+    energy: typeof player.energy === 'number' ? player.energy : 0,
+    maxEnergy: typeof player.maxEnergy === 'number' ? player.maxEnergy : 0,
     fittings: player.fittings || {},
     updated_at: nowIso()
   };
