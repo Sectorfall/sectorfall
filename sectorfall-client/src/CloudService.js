@@ -890,20 +890,25 @@ async saveInventoryState(playerId, starportId, items, context = "unknown") {
         ship_config: starterShip,
       });
 
-      const starterEquipment = getStarterLoadout(starterShip?.ship_type || starterShip?.name || null)
-  .map(({ itemKey, quality }) => createItemInstance(itemKey, { id: uuid(), quality }))
-  .filter(Boolean);
+      const existingInventory = await this.getInventoryState(playerId, normalizedStarportId);
+      const existingStorage = Array.isArray(existingInventory?.items) ? existingInventory.items : [];
 
-      const existingInventoryState = await this.getInventoryState(playerId, normalizedStarportId);
-      const existingStorageItems = Array.isArray(existingInventoryState?.items)
-        ? existingInventoryState.items
-        : [];
-      const mergedStorageItems = [...existingStorageItems, ...starterEquipment];
+      const starterSpecs = getStarterLoadout(starterShip?.ship_type || starterShip?.name || null) || [];
+      const existingStarterKeys = new Set(
+        existingStorage
+          .map((item) => String(item?.itemKey || item?.item_id || "").trim())
+          .filter(Boolean)
+      );
+
+      const missingStarterEquipment = starterSpecs
+        .filter(({ itemKey }) => !existingStarterKeys.has(String(itemKey || "").trim()))
+        .map(({ itemKey, quality }) => createItemInstance(itemKey, { id: uuid(), quality }))
+        .filter(Boolean);
 
       await this.saveInventoryState(
         playerId,
         normalizedStarportId,
-        mergedStorageItems,
+        [...existingStorage, ...missingStarterEquipment],
         "grantStarterKit"
       );
 
