@@ -9063,6 +9063,8 @@ const defaultTelemetry = {
         const localCacheRaw = localStorage.getItem('arc_space_flight_save');
         let localCache = localCacheRaw ? JSON.parse(localCacheRaw) : null;
         
+        // RS-1: local cache is preview-only now. Backend HELLO -> DOCKED/WELCOME
+        // is the source of truth for actual spawn state.
         const savedState = localCache?.gameState || {};
         const telemetryBase = (cloudRecord && typeof cloudRecord.telemetry === 'object' && cloudRecord.telemetry)
   ? { ...cloudRecord.telemetry }
@@ -9108,48 +9110,54 @@ if (gameManagerRef.current) {
     console.log("[Init] rebuildShip called for:", shipType);
   }
 }
-        // system_id now comes ONLY from EC2 spawn packet
-let targetSystemId = STARPORT_TO_SYSTEM[lastStationId] || 'cygnus-prime';
+        // RS-1: bootstrap the engine into a neutral space system and let backend
+        // HELLO -> DOCKED/WELCOME choose the real docked/in-space presentation.
+        const persistedStarportId = String(cloudRecord?.starport_id || '').trim().toUpperCase() || null;
+        const persistedSystemId = String(cloudRecord?.system_id || '').trim().toLowerCase() || null;
+        let targetSystemId = persistedSystemId
+            || (persistedStarportId ? STARPORT_TO_SYSTEM[persistedStarportId] : null)
+            || STARPORT_TO_SYSTEM[lastStationId]
+            || 'cygnus-prime';
         const currentStarportId = SYSTEM_TO_STARPORT[targetSystemId];
-        await gameManagerRef.current.loadSystem(targetSystemId, currentStarportId);
+        await gameManagerRef.current.loadSystem(targetSystemId, null);
 
-        setIsDocked(localCache ? localCache.isDocked : true);
-        const dockedAtStarport = localCache ? localCache.isDocked : true;
+        // Never let local cache or preload force a docked spawn on refresh.
+        // websocket.js will flip this to true only after an authoritative DOCKED packet.
+        setIsDocked(false);
 
-        // 6. Load Regional Storage and Hangar if docked
+        // 6. Preload dockside storage only when persistence already says the commander is docked.
+        // This is data preload only; it must not decide presentation state.
         let stationStorage = [];
         let hangarShips = [];
-        if (dockedAtStarport) {
-            if (currentStarportId) {
-                const [inventoryState, hangarData] = await Promise.all([
-                    cloudService.getInventoryState(playerId, currentStarportId),
-                    cloudService.getHangarShips(playerId, currentStarportId)
-                ]);
-                
-                if (inventoryState) {
-                    stationStorage = (Array.isArray(inventoryState.items) ? inventoryState.items : [])
-                        .filter(i => i.type !== 'ship' && !i.isShip)
-                        .map(hydrateItem);
-                }
-                if (hangarData) {
-                    hangarShips = (hangarData || []).map(h => {
-                        const config = h.ship_config || {};
-                        const type = config.type || config.item_id || 'OMNI SCOUT';
-                        const registry = SHIP_REGISTRY[type] || SHIP_REGISTRY['OMNI SCOUT'];
-                        
-                        return hydrateVessel({
-                            ...registry, // Use registry as base for safety
-                            ...config, // Overlay stored instance data
-                            id: h.ship_id,
-                            type: type, // Ensure type matches registry key
-                            dbId: h.id // internal row id
-                        });
+        if (persistedStarportId) {
+            const [inventoryState, hangarData] = await Promise.all([
+                cloudService.getInventoryState(playerId, persistedStarportId),
+                cloudService.getHangarShips(playerId, persistedStarportId)
+            ]);
+            
+            if (inventoryState) {
+                stationStorage = (Array.isArray(inventoryState.items) ? inventoryState.items : [])
+                    .filter(i => i.type !== 'ship' && !i.isShip)
+                    .map(hydrateItem);
+            }
+            if (hangarData) {
+                hangarShips = (hangarData || []).map(h => {
+                    const config = h.ship_config || {};
+                    const type = config.type || config.item_id || 'OMNI SCOUT';
+                    const registry = SHIP_REGISTRY[type] || SHIP_REGISTRY['OMNI SCOUT'];
+                    
+                    return hydrateVessel({
+                        ...registry, // Use registry as base for safety
+                        ...config, // Overlay stored instance data
+                        id: h.ship_id,
+                        type: type, // Ensure type matches registry key
+                        dbId: h.id // internal row id
                     });
-                }
+                });
             }
         }
 
-        const actualSystemData = SYSTEMS_REGISTRY[targetSystemId];
+        const actualSystemData = SYSTEMS_REGISTRY[targetSystemId] || SYSTEMS_REGISTRY['cygnus-prime'];
         const systemInfo = {
             id: targetSystemId,
             name: actualSystemData.name.toUpperCase(),
@@ -9185,7 +9193,7 @@ let targetSystemId = STARPORT_TO_SYSTEM[lastStationId] || 'cygnus-prime';
                 inventory: loadedInventory,
                 currentCargoWeight: totalWeight,
                 currentCargoVolume: totalVolume,
-                storage: currentStarportId ? { ...prev.storage, [currentStarportId]: stationStorage } : prev.storage,
+                storage: persistedStarportId ? { ...prev.storage, [persistedStarportId]: stationStorage } : prev.storage,
                 hangarShips: hangarShips,
                 
                 activeMenu: null,
@@ -10604,18 +10612,11 @@ showStarportUI: function (starportId) {
         setBattlegroundExtractState(null);
         setBattlegroundState(prev => ({ ...prev, open: false, status: 'idle', currentInstanceId: null, bankedCredits: 0, choice: null, hud: { currentWave: 0, enemiesRemaining: 0, statusLabel: 'STANDBY' } }));
 
-        // 3. Finalize authoritative home-starport respawn on the backend before showing docked UI
-        const respawnResult = await window.backendSocket?.requestRespawnHome?.({ starportId: homeStarport });
-        if (!respawnResult?.ok) {
-            console.error('[Respawn][Client] backend home-starport respawn failed:', respawnResult);
-            showNotification('RESPAWN FAILED: backend dock authority did not complete.', 'error');
-            return;
-        }
-
+        // 3. Teleport and Dock at Home Starport
         if (gameManagerRef.current) {
-            await gameManagerRef.current.loadSystem(respawnResult.system_id || respawnSystemId, homeStarport);
+            await gameManagerRef.current.loadSystem(respawnSystemId, homeStarport);
             gameManagerRef.current.setDocked(true);
-
+            
             // Absolute Visibility Suppression: No ship should be rendered in space during docking
             if (gameManagerRef.current.ship?.sprite) {
                 gameManagerRef.current.ship.sprite.visible = false;
@@ -10623,7 +10624,7 @@ showStarportUI: function (starportId) {
                 gameManagerRef.current.ship.velocity.set(0, 0);
             }
         }
-
+        
         setIsDocked(true);
         showNotification(`Vessel lost. Respawning at Port ${homeStarport.replace(/_/g, ' ')}.`, "info");
     };

@@ -9,6 +9,7 @@
  */
 
 import { supabase } from "./supabaseClient.js";
+import { STARPORT_TO_SYSTEM } from "./data/systemsRegistry.js";
 
 // -----------------------------------------------------
 // REMOTE PLAYER REGISTRY
@@ -142,7 +143,6 @@ export class BackendSocket {
     this._pendingActivateRequests = new Map();
     this._pendingFabricationRequests = new Map();
     this._pendingMarketRequests = new Map();
-    this._pendingRespawnRequests = new Map();
     this.arenaHooks = null;
     this.battlegroundHooks = null;
     this.instanceBoundaryHooks = null;
@@ -324,10 +324,6 @@ export class BackendSocket {
     switch (data.type) {
       case "DOCKED":
         this.handleDocked(data);
-        break;
-
-      case "RESPAWN_HOME_RESULT":
-        this.handleRespawnHomeResult(data);
         break;
 
       case "WELCOME":
@@ -639,7 +635,7 @@ export class BackendSocket {
   // -----------------------------------------------------
   // DOCKED HANDLER
   // -----------------------------------------------------
-  handleDocked(data) {
+  async handleDocked(data) {
     console.log("[Dock][Client] received DOCKED", data);
 
     try {
@@ -657,11 +653,29 @@ export class BackendSocket {
 
     this.isDocked = true;
     this.starportId = data.starport_id;
+    this.currentSystemId = STARPORT_TO_SYSTEM[String(data.starport_id || '').trim().toUpperCase()] || this.currentSystemId;
     validateAuthoritativeCombatStats(data, 'DOCKED');
     try { window.dispatchEvent(new CustomEvent("sectorfall:authoritative_ship_state", { detail: data })); } catch {}
 
     // while docked, we are not in space with a valid spawn
     this.awaitingSpawn = true;
+
+    const gm = window.game?.manager || window.gameManager || window.game;
+    const targetSystemId = STARPORT_TO_SYSTEM[String(data.starport_id || '').trim().toUpperCase()] || null;
+    const localSysRaw = gm?.currentSystemId || gm?.currentSystem || gm?.systemId || gm?.system_id || this.currentSystemId;
+    const localSys = this.normalizeSystemId(localSysRaw);
+
+    if (gm && targetSystemId && localSys && targetSystemId !== localSys && typeof gm.loadSystem === "function") {
+      try {
+        console.log("[Dock][Client] System mismatch on DOCKED. Local:", localSys, "Server starport system:", targetSystemId, "-> switching");
+        const p = gm.loadSystem(targetSystemId, null);
+        if (p && typeof p.then === "function") {
+          await p;
+        }
+      } catch (e) {
+        console.warn("[Dock][Client] loadSystem before dock UI failed:", e?.message || e);
+      }
+    }
 
     const applyDockUI = () => {
       if (
@@ -1964,20 +1978,6 @@ if (fireSolution && typeof fireSolution === "object") {
     });
   }
 
-
-  handleRespawnHomeResult(data) {
-    try {
-      const requestId = data?.requestId;
-      if (!requestId) return;
-      const pending = this._pendingRespawnRequests.get(requestId);
-      if (!pending) return;
-      this._pendingRespawnRequests.delete(requestId);
-      pending.resolve(data);
-    } catch (err) {
-      console.warn('[Respawn][Client] failed to resolve respawn request:', err?.message || err);
-    }
-  }
-
   requestCommanderProfileUpdate({ commanderName = null, homeStarport = null, commanderStats = null } = {}) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId) return Promise.resolve(null);
     const requestId = `cmd-profile-${Date.now()}-${++this.seq}`;
@@ -2023,29 +2023,6 @@ if (fireSolution && typeof fireSolution === "object") {
           pending.resolve(null);
         }
       }, 6000);
-    });
-  }
-
-
-  requestRespawnHome({ starportId } = {}) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !starportId) return Promise.resolve(null);
-    const requestId = `respawn-${Date.now()}-${++this.seq}`;
-    return new Promise((resolve) => {
-      this._pendingRespawnRequests.set(requestId, { resolve, createdAt: Date.now(), starportId });
-      this.socket.send(JSON.stringify({
-        type: 'RESPAWN_HOME',
-        requestId,
-        userId: this.userId,
-        starport_id: starportId,
-        clientTime: Date.now()
-      }));
-      setTimeout(() => {
-        const pending = this._pendingRespawnRequests.get(requestId);
-        if (pending) {
-          this._pendingRespawnRequests.delete(requestId);
-          pending.resolve(null);
-        }
-      }, 7000);
     });
   }
 
