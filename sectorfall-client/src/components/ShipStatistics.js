@@ -241,7 +241,7 @@ export const aggregateShipStats = (ship, fittings) => {
             average: avgRes
         },
         shields: {
-            max: ship.maxShields || 0,
+            max: shieldCapacity,
             regen: finalShieldRegen,
             delay: finalShieldDelay
         },
