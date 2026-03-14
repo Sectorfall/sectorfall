@@ -6288,6 +6288,194 @@ async function sendCommanderState(socket, userId, requestId = null) {
   }));
 }
 
+
+function getFittingSlotClass(slotId) {
+  const id = String(slotId || '').trim().toLowerCase();
+  if (id.startsWith('weapon')) return 'weapon';
+  if (id.startsWith('rig')) return 'rig';
+  if (id.startsWith('synapse')) return 'synapse';
+  if (id.startsWith('active')) return 'core';
+  if (id.startsWith('passive')) return 'utility';
+  return 'utility';
+}
+
+function getFittingItemClass(item = null) {
+  if (!item || typeof item !== 'object') return null;
+  const t = String(item.type || '').toLowerCase();
+  const st = String(item.subtype || '').toLowerCase();
+  const n = String(item.name || '').toLowerCase();
+  if (t === 'blueprint' || t === 'resource' || t === 'bio-material' || t === 'catalyst') return null;
+  if (t === 'drone-module' || n.includes('drone')) return 'utility';
+  if (t === 'weapon' || t === 'mining' || st.includes('laser') || st.includes('cannon') || st.includes('missile') || n.includes('flux') || n.includes('pulse') || n.includes('seeker') || n.includes('mining')) return 'weapon';
+  if (t === 'shield' || n.includes('shield')) return 'core';
+  if (t === 'thruster' || n.includes('thruster')) return 'utility';
+  if (t === 'rig' || n.includes('rig')) return 'rig';
+  if (t === 'synapse' || st.includes('synapse') || n.includes('synapse')) return 'synapse';
+  return 'utility';
+}
+
+function buildCommanderActiveShipStats(player) {
+  if (!player) return null;
+  const hydrated = applyHydratedPlayerCombatStats(player, { preserveCurrent: true });
+  return {
+    hp: player.hp,
+    maxHp: hydrated?.maxHp,
+    shields: player.shields,
+    maxShields: hydrated?.maxShields,
+    energy: player.energy,
+    maxEnergy: hydrated?.maxEnergy,
+    armor: hydrated?.armor,
+    resistances: hydrated?.resistances || {},
+    combatStats: hydrated || null,
+    fittings: player.fittings || {}
+  };
+}
+
+async function handleCommanderFittingRequest(socket, data) {
+  const player = players.get(socket);
+  const userId = String(data?.userId || player?.userId || '').trim();
+  const requestId = data?.requestId || null;
+  if (!player || !userId || player.userId !== userId) return;
+
+  if (!player.docked) {
+    socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'not_docked', serverTime: Date.now() }));
+    return;
+  }
+
+  const action = String(data?.action || '').trim().toLowerCase();
+  const slotId = String(data?.slotId || data?.slot_id || '').trim();
+  const starportId = normalizeStarportId(data?.starport_id || player?.starport_id);
+  const itemId = String(data?.itemId || data?.item_id || '').trim();
+  const source = String(data?.source || '').trim().toLowerCase() === 'storage' ? 'storage' : 'ship';
+  if (!slotId || !starportId || !['install', 'unfit'].includes(action)) {
+    socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'invalid_request', serverTime: Date.now() }));
+    return;
+  }
+
+  try {
+    const commander = await loadCommanderDataRow(userId);
+    const activeShipId = String(commander?.active_ship_id || player?.active_ship_instance_id || '').trim();
+    if (!activeShipId) {
+      socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'no_active_ship', serverTime: Date.now() }));
+      return;
+    }
+
+    const state = await loadShipState(userId);
+    const storageState = await loadInventoryStateServer(userId, starportId);
+    const cargo = cloneItems(Array.isArray(state?.cargo) ? state.cargo : (Array.isArray(player.cargo) ? player.cargo : []));
+    const storage = cloneItems(Array.isArray(storageState?.items) ? storageState.items : []);
+    const currentFittings = sanitizeRuntimeFittings(player.fittings || state?.fittings || {}, player.ship_type || state?.ship_type || state?.shipType || 'ship_omni_scout');
+    const nextFittings = { ...currentFittings };
+
+    if (action === 'install') {
+      if (!itemId) {
+        socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'missing_item', serverTime: Date.now() }));
+        return;
+      }
+      const sourceItems = source === 'storage' ? storage : cargo;
+      const itemIndex = sourceItems.findIndex(entry => String(entry?.id || '').trim() === itemId);
+      if (itemIndex < 0) {
+        socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'item_not_found', serverTime: Date.now() }));
+        return;
+      }
+      const rawItem = { ...sourceItems[itemIndex] };
+      const slotClass = getFittingSlotClass(slotId);
+      const itemClass = getFittingItemClass(rawItem);
+      if (!itemClass) {
+        socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'invalid_item_type', serverTime: Date.now() }));
+        return;
+      }
+      if (slotClass !== itemClass) {
+        socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'slot_mismatch', serverTime: Date.now() }));
+        return;
+      }
+      const oldItem = nextFittings[slotId];
+      if (oldItem) cargo.push(cloneItems([oldItem])[0]);
+      sourceItems.splice(itemIndex, 1);
+      nextFittings[slotId] = rawItem;
+    } else {
+      const oldItem = nextFittings[slotId];
+      if (!oldItem) {
+        socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'slot_empty', serverTime: Date.now() }));
+        return;
+      }
+      cargo.push(cloneItems([oldItem])[0]);
+      nextFittings[slotId] = null;
+    }
+
+    player.fittings = sanitizeRuntimeFittings(nextFittings, player.ship_type || state?.ship_type || state?.shipType || 'ship_omni_scout');
+    player.cargo = cloneItems(cargo);
+    const activeShipStats = buildCommanderActiveShipStats(player);
+
+    const persistedShipType = player.ship_type || state?.ship_type || state?.shipType || 'ship_omni_scout';
+    const telemetry = { ...(state?.telemetry && typeof state.telemetry === 'object' ? state.telemetry : telemetrySnapshot(player)), cargo: player.cargo, fittings: player.fittings };
+
+    const { error: shipUpdateError } = await supabase
+      .from('ship_states_v2')
+      .upsert({
+        player_id: userId,
+        system_id: state?.system_id || player.system_id || 'cygnus-prime',
+        starport_id: starportId,
+        ship_type: persistedShipType,
+        hull: player.hp,
+        maxHp: player.maxHp,
+        shields: player.shields,
+        maxShields: player.maxShields,
+        energy: player.energy,
+        maxEnergy: player.maxEnergy,
+        cargo: player.cargo,
+        fittings: player.fittings,
+        telemetry,
+        updated_at: nowIso()
+      }, { onConflict: 'player_id' });
+    if (shipUpdateError) {
+      console.warn('[Commander][Fitting] ship_states_v2 update failed:', userId, shipUpdateError.message);
+      socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: 'ship_persist_failed', serverTime: Date.now() }));
+      return;
+    }
+
+    await saveInventoryStateServer(userId, starportId, storage);
+    await persistActiveShipToHangar(player, {
+      hp: player.hp,
+      maxHp: player.maxHp,
+      shields: player.shields,
+      maxShields: player.maxShields,
+      energy: player.energy,
+      maxEnergy: player.maxEnergy,
+      fittings: player.fittings,
+      hull_id: persistedShipType
+    });
+
+    const hangarRows = await loadHangarShipsForPlayer(userId);
+    const commanderState = {
+      credits: Number((await ensureCommanderWallet(userId))?.credits ?? commander?.credits ?? 0),
+      level: finiteNum(commander?.level, 1),
+      experience: finiteNum(commander?.experience, 0),
+      commander_name: commander?.commander_name || null,
+      active_ship_id: activeShipId,
+      active_ship_stats: activeShipStats,
+      owned_ships: hangarRows.map(buildOwnedShipEntryFromHangarRow).filter(Boolean),
+      serverTime: Date.now()
+    };
+
+    socket.send(JSON.stringify({
+      type: 'COMMANDER_FITTING_RESULT',
+      requestId,
+      ok: true,
+      action,
+      slotId,
+      cargo: player.cargo,
+      storage,
+      active_ship_stats: activeShipStats,
+      commanderState,
+      serverTime: Date.now()
+    }));
+  } catch (e) {
+    console.warn('[Commander][Fitting] exception:', userId, action, slotId, e?.message || e);
+    socket.send(JSON.stringify({ type: 'COMMANDER_FITTING_RESULT', requestId, ok: false, error: e?.message || 'fitting_failed', serverTime: Date.now() }));
+  }
+}
+
 async function handleCommanderGetState(socket, data) {
   const player = players.get(socket);
   const userId = String(data?.userId || player?.userId || "").trim();
@@ -10264,6 +10452,8 @@ wss.on("connection", (socket) => {
         return await handleCommanderActivateShip(socket, data);
       case "COMMANDER_REPAIR_SHIP":
         return await handleCommanderRepairShip(socket, data);
+      case "COMMANDER_FITTING_REQUEST":
+        return await handleCommanderFittingRequest(socket, data);
       case "FABRICATE_BLUEPRINT_REQUEST":
         return await handleFabricateBlueprint(socket, data);
       case "REFINE_ORE_REQUEST":

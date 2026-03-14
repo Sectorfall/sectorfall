@@ -149,6 +149,7 @@ export class BackendSocket {
     this._pendingRespawnRequests = new Map();
     this._pendingFabricationRequests = new Map();
     this._pendingRefineryRequests = new Map();
+    this._pendingFittingRequests = new Map();
     this._pendingMarketRequests = new Map();
     this.arenaHooks = null;
     this.battlegroundHooks = null;
@@ -528,6 +529,10 @@ export class BackendSocket {
 
       case "REFINERY_RESULT":
         this.handleRefineryResult(data);
+        break;
+
+      case "COMMANDER_FITTING_RESULT":
+        this.handleCommanderFittingResult(data);
         break;
       case "COMMANDER_PROFILE_RESULT":
         this.handleCommanderProfileResult(data);
@@ -2122,6 +2127,32 @@ if (fireSolution && typeof fireSolution === "object") {
         const pending = this._pendingRefineryRequests.get(requestId);
         if (pending) {
           this._pendingRefineryRequests.delete(requestId);
+          pending.resolve(null);
+        }
+      }, 9000);
+    });
+  }
+
+  requestCommanderFitting({ action, starportId, slotId, itemId = null, source = null } = {}) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.userId || !action || !starportId || !slotId) return Promise.resolve(null);
+    const requestId = `fit-${Date.now()}-${++this.seq}`;
+    return new Promise((resolve) => {
+      this._pendingFittingRequests.set(requestId, { resolve, createdAt: Date.now(), action, slotId, itemId, source });
+      this.socket.send(JSON.stringify({
+        type: 'COMMANDER_FITTING_REQUEST',
+        requestId,
+        userId: this.userId,
+        action,
+        starport_id: starportId,
+        slotId,
+        itemId,
+        source,
+        clientTime: Date.now()
+      }));
+      setTimeout(() => {
+        const pending = this._pendingFittingRequests.get(requestId);
+        if (pending) {
+          this._pendingFittingRequests.delete(requestId);
           pending.resolve(null);
         }
       }, 9000);

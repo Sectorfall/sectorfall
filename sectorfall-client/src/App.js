@@ -10199,7 +10199,7 @@ showStarportUI: function (starportId) {
         });
     };
 
-    const handleInstallFitting = (item) => {
+    const handleInstallFitting = async (item) => {
         if (!activeFittingSlot) return;
 
         const isCommanderFitting = activeFittingSlot.type === 'outfit' || activeFittingSlot.type === 'implant';
@@ -10238,36 +10238,136 @@ showStarportUI: function (starportId) {
             }
         }
 
-        setGameState(prev => applyInstallFittingState(prev, {
-            item,
-            activeFittingSlot,
-            cloudUserId: cloudUser?.id,
-            systemToStarport: SYSTEM_TO_STARPORT,
-            hydrateFittedModule,
-            getLiveShipResources,
-            cloudService,
-            gameManager: gameManagerRef.current
-        }));
+        if (isCommanderFitting) {
+            setGameState(prev => applyInstallFittingState(prev, {
+                item,
+                activeFittingSlot,
+                cloudUserId: cloudUser?.id,
+                systemToStarport: SYSTEM_TO_STARPORT,
+                hydrateFittedModule,
+                getLiveShipResources,
+                cloudService,
+                gameManager: gameManagerRef.current
+            }));
 
-        setActiveFittingSlot(null);
-        showNotification(`${item.name} installed successfully.`, "info");
+            setActiveFittingSlot(null);
+            showNotification(`${item.name} installed successfully.`, "info");
+            return;
+        }
+
+        const currentSystemId = gameState.currentSystem?.id;
+        const starportId = SYSTEM_TO_STARPORT[currentSystemId];
+        if (!starportId) {
+            showNotification('FITTING FAILED: You must be docked at a starport.', 'error');
+            return;
+        }
+
+        try {
+            const result = await backendSocket.requestCommanderFitting({
+                action: 'install',
+                starportId,
+                slotId: activeFittingSlot.id,
+                itemId: item?.id,
+                source: item?.location === 'storage' ? 'storage' : 'ship'
+            });
+
+            if (!result) {
+                showNotification('FITTING FAILED: Backend timeout.', 'error');
+                return;
+            }
+            if (!result.ok) {
+                showNotification(`FITTING FAILED: ${String(result.error || 'backend_rejected').replace(/_/g, ' ').toUpperCase()}`, 'error');
+                return;
+            }
+
+            setGameState(prev => {
+                const nextInventory = Array.isArray(result.cargo) ? result.cargo.map(entry => hydrateItem(entry)) : prev.inventory;
+                const nextStorageItems = Array.isArray(result.storage) ? result.storage.map(entry => hydrateItem(entry)) : (prev.storage?.[starportId] || []);
+                const nextCargoWeight = nextInventory.reduce((sum, cargoItem) => sum + (parseFloat(cargoItem.weight) || 0), 0);
+                const nextOwnedShips = Array.isArray(result?.commanderState?.owned_ships)
+                    ? result.commanderState.owned_ships.map(ship => hydrateVessel(ship, ship))
+                    : prev.ownedShips;
+                return {
+                    ...prev,
+                    inventory: nextInventory,
+                    storage: { ...(prev.storage || {}), [starportId]: nextStorageItems },
+                    ownedShips: nextOwnedShips,
+                    currentCargoWeight: nextCargoWeight
+                };
+            });
+
+            setActiveFittingSlot(null);
+            showNotification(`${item.name} installed successfully.`, 'info');
+        } catch (err) {
+            console.warn('[Fitting][Client] backend install failed', err);
+            showNotification('FITTING FAILED: Backend rejected the request.', 'error');
+        }
     };
 
-    const handleUnfitFitting = (slotId) => {
+    const handleUnfitFitting = async (slotId) => {
         if (!activeFittingSlot) return;
 
-        setGameState(prev => applyUnfitFittingState(prev, {
-            slotId,
-            activeFittingSlot,
-            cloudUserId: cloudUser?.id,
-            systemToStarport: SYSTEM_TO_STARPORT,
-            getLiveShipResources,
-            cloudService,
-            gameManager: gameManagerRef.current
-        }));
+        const isCommanderFitting = activeFittingSlot.type === 'outfit' || activeFittingSlot.type === 'implant';
+        if (isCommanderFitting) {
+            setGameState(prev => applyUnfitFittingState(prev, {
+                slotId,
+                activeFittingSlot,
+                cloudUserId: cloudUser?.id,
+                systemToStarport: SYSTEM_TO_STARPORT,
+                getLiveShipResources,
+                cloudService,
+                gameManager: gameManagerRef.current
+            }));
 
-        setActiveFittingSlot(null);
-        showNotification("Module uninstalled to ship cargo.", "info");
+            setActiveFittingSlot(null);
+            showNotification("Module uninstalled to ship cargo.", "info");
+            return;
+        }
+
+        const currentSystemId = gameState.currentSystem?.id;
+        const starportId = SYSTEM_TO_STARPORT[currentSystemId];
+        if (!starportId) {
+            showNotification('UNFIT FAILED: You must be docked at a starport.', 'error');
+            return;
+        }
+
+        try {
+            const result = await backendSocket.requestCommanderFitting({
+                action: 'unfit',
+                starportId,
+                slotId
+            });
+            if (!result) {
+                showNotification('UNFIT FAILED: Backend timeout.', 'error');
+                return;
+            }
+            if (!result.ok) {
+                showNotification(`UNFIT FAILED: ${String(result.error || 'backend_rejected').replace(/_/g, ' ').toUpperCase()}`, 'error');
+                return;
+            }
+
+            setGameState(prev => {
+                const nextInventory = Array.isArray(result.cargo) ? result.cargo.map(entry => hydrateItem(entry)) : prev.inventory;
+                const nextStorageItems = Array.isArray(result.storage) ? result.storage.map(entry => hydrateItem(entry)) : (prev.storage?.[starportId] || []);
+                const nextCargoWeight = nextInventory.reduce((sum, cargoItem) => sum + (parseFloat(cargoItem.weight) || 0), 0);
+                const nextOwnedShips = Array.isArray(result?.commanderState?.owned_ships)
+                    ? result.commanderState.owned_ships.map(ship => hydrateVessel(ship, ship))
+                    : prev.ownedShips;
+                return {
+                    ...prev,
+                    inventory: nextInventory,
+                    storage: { ...(prev.storage || {}), [starportId]: nextStorageItems },
+                    ownedShips: nextOwnedShips,
+                    currentCargoWeight: nextCargoWeight
+                };
+            });
+
+            setActiveFittingSlot(null);
+            showNotification('Module uninstalled to ship cargo.', 'info');
+        } catch (err) {
+            console.warn('[Fitting][Client] backend unfit failed', err);
+            showNotification('UNFIT FAILED: Backend rejected the request.', 'error');
+        }
     };
 
     const handleToggleWeaponGroup = (slotId, group) => {
