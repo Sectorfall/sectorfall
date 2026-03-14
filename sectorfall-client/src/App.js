@@ -3607,14 +3607,6 @@ const RefineryMenu = ({ gameState, onRefine }) => {
     const stationCargo = currentStarportId ? (gameState.storage[currentStarportId] || []).filter(i => i.type === 'resource' && !i.isRefined) : [];
 
     const handleRefineClick = (item, source, filteredIndex) => {
-        console.log('[REFINERY UI] button clicked', {
-            itemId: item?.id || null,
-            itemName: item?.name || null,
-            source,
-            filteredIndex,
-            amount: item?.amount ?? null,
-            isRefined: !!item?.isRefined
-        });
         onRefine(item, source, filteredIndex);
     };
 
@@ -11707,49 +11699,22 @@ backendSocket.sendUndock(
 
     const handleRefine = async (item, source, filteredIndex = -1) => {
         const starportId = SYSTEM_TO_STARPORT[gameState.currentSystem?.id];
-        console.log('[REFINERY UI] refine handler entered', {
-            currentSystemId: gameState.currentSystem?.id || null,
-            starportId: starportId || null,
-            itemId: item?.id || null,
-            itemName: item?.name || null,
-            source,
-            filteredIndex,
-            socketState: backendSocket?.socket?.readyState,
-            socketOpen: backendSocket?.socket?.readyState === WebSocket.OPEN,
-            hasUserId: !!backendSocket?.userId
-        });
         if (!starportId) {
-            console.warn('[REFINERY UI] blocked before request: no starport mapping for current system', {
-                currentSystemId: gameState.currentSystem?.id || null
-            });
             showNotification(getRefineryErrorMessage('not_docked'), 'error');
             return { ok: false, error: 'not_docked' };
         }
 
         try {
-            const requestPayload = buildRefineryRequestPayload({
+            const result = await backendSocket.requestRefineOre(buildRefineryRequestPayload({
                 starportId,
                 item,
                 source,
                 filteredIndex,
                 inventory: gameState.inventory,
                 stationStorage: gameState.storage?.[starportId] || []
-            });
-
-            console.log('[REFINERY UI] sending REFINE_ORE_REQUEST', requestPayload);
-
-            const result = await backendSocket.requestRefineOre(requestPayload);
+            }));
 
             if (!result) {
-                console.warn('[REFINERY UI] request returned null before backend result', {
-                    starportId,
-                    itemId: item?.id || null,
-                    source,
-                    filteredIndex,
-                    socketState: backendSocket?.socket?.readyState,
-                    socketOpen: backendSocket?.socket?.readyState === WebSocket.OPEN,
-                    hasUserId: !!backendSocket?.userId
-                });
                 showNotification('REFINING FAILED: Backend timeout.', 'error');
                 return { ok: false, error: 'timeout' };
             }
