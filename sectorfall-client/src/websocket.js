@@ -674,6 +674,15 @@ export class BackendSocket {
   // -----------------------------------------------------
   async handleDocked(data) {
     console.log("[Dock][Client] received DOCKED", data);
+    console.log('[ShipDisplay][DockPayload]', {
+      shipId: data?.shipId || data?.ship_id || data?.combat_stats?.shipId || null,
+      displayName: data?.combat_stats?.shipDisplayName || null,
+      hp: data?.hp,
+      maxHp: data?.maxHp,
+      shields: data?.shields,
+      maxShields: data?.maxShields,
+      fittings: data?.fittings || data?.active_ship_stats?.fittings || null
+    });
 
     try {
       const gm = window.game?.manager || window.gameManager;
@@ -764,6 +773,15 @@ export class BackendSocket {
     const sys = this.normalizeSystemId(data.system_id);
 
     console.log("[WELCOME RAW]", data);
+    console.log('[ShipDisplay][SpacePayload]', {
+      shipId: data?.shipId || data?.ship_id || data?.combat_stats?.shipId || null,
+      displayName: data?.combat_stats?.shipDisplayName || null,
+      hp: data?.hp,
+      maxHp: data?.maxHp,
+      shields: data?.shields,
+      maxShields: data?.maxShields,
+      fittings: data?.fittings || null
+    });
     const authoritativeValidation = validateAuthoritativeCombatStats(data, 'WELCOME');
     console.log("[WELCOME DEFENSE]", { armor: data?.armor, resistances: data?.resistances || {}, combat_stats: data?.combat_stats || data?.combatStats || null, authoritative_ok: authoritativeValidation.ok, missing: authoritativeValidation.missing });
     this._dockSentThisDock = false;

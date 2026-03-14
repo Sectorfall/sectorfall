@@ -6330,8 +6330,16 @@ async function sendCommanderState(socket, userId, requestId = null) {
   const runtimePlayer = runtimePlayerRef?.player || null;
   const commanderActiveShipId = String(commander?.active_ship_id || '').trim();
   if (runtimePlayer && commanderActiveShipId) {
+    const runtimeNeedsHydrate = runtimePlayer.docked === true
+      || String(runtimePlayer.active_ship_instance_id || runtimePlayer.current_ship_instance_id || '').trim() !== commanderActiveShipId
+      || Object.values(runtimePlayer.fittings || {}).every(v => !v);
+    if (runtimeNeedsHydrate) {
+      await hydratePlayerFromCommanderActiveShip(runtimePlayer, { fillVitals: false, persistState: false });
+    }
     const hydrated = applyHydratedPlayerCombatStats(runtimePlayer, { preserveCurrent: true });
     activeShipStats = {
+      shipId: runtimePlayer.ship_type || hydrated?.shipId || null,
+      ship_id: runtimePlayer.ship_type || hydrated?.shipId || null,
       hp: runtimePlayer.hp,
       maxHp: hydrated?.maxHp,
       shields: runtimePlayer.shields,
@@ -6343,6 +6351,17 @@ async function sendCommanderState(socket, userId, requestId = null) {
       combatStats: hydrated || null,
       fittings: runtimePlayer.fittings || {}
     };
+    console.log('[Commander][State] active ship hydrate', {
+      userId,
+      docked: !!runtimePlayer.docked,
+      activeShipId: commanderActiveShipId,
+      runtimeShipType: runtimePlayer.ship_type || null,
+      hp: runtimePlayer.hp,
+      maxHp: runtimePlayer.maxHp,
+      shields: runtimePlayer.shields,
+      maxShields: runtimePlayer.maxShields,
+      fittings: runtimePlayer.fittings || {}
+    });
   }
 
   console.log(`[Commander][State] user=${userId} walletCredits=${wallet?.credits ?? 'null'} commanderCredits=${commander?.credits ?? 'null'} sentCredits=${credits} commanderName=${commanderName || 'null'} requestId=${requestId || 'null'}`);
@@ -8612,7 +8631,26 @@ async function handleDock(socket, data) {
 
     if (error) console.warn("[Backend] Persist DOCK failed:", error.message);
     else {
-      await persistActiveShipToHangar(player);
+      await persistActiveShipToHangar(player, {
+        hp: player.hp,
+        maxHp: player.maxHp,
+        shields: player.shields,
+        maxShields: player.maxShields,
+        energy: player.energy,
+        maxEnergy: player.maxEnergy,
+        fittings: player.fittings || {}
+      });
+      await hydratePlayerFromCommanderActiveShip(player, { fillVitals: false, persistState: false });
+      console.log('[DOCK] hydrated active ship after persist', {
+        userId: player.userId,
+        activeShipInstanceId: player.active_ship_instance_id || null,
+        ship_type: player.ship_type || null,
+        hp: player.hp,
+        maxHp: player.maxHp,
+        shields: player.shields,
+        maxShields: player.maxShields,
+        fittings: player.fittings || {}
+      });
       console.log(`[Backend] ${player.userId} docked at ${starport_id} (saved last space snapshot)`);
     }
   } catch (e) {
@@ -8626,6 +8664,9 @@ async function handleDock(socket, data) {
   socket.send(JSON.stringify({
     type: "DOCKED",
     starport_id,
+    active_ship_id: player.active_ship_instance_id || player.current_ship_instance_id || null,
+    shipId: player.ship_type || null,
+    ship_id: player.ship_type || null,
     hp: player.hp,
     maxHp: player.maxHp,
     shields: player.shields,
@@ -8634,7 +8675,8 @@ async function handleDock(socket, data) {
     maxEnergy: player.maxEnergy,
     armor: player.armor,
     resistances: player.resistances || {},
-    combat_stats: player.combatStats || null
+    combat_stats: player.combatStats || null,
+    fittings: player.fittings || {}
   }));
   await sendCommanderState(socket, player.userId);
 }
