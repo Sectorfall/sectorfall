@@ -8708,7 +8708,6 @@ const physicalSave = cloudService.saveToCloud(cloudUser.id, starportId, {
                 credits: gameState.credits,
                 experience: gameState.experience,
                 level: gameState.level,
-                owned_ships: gameState.ownedShips,
                 fleet: gameState.fleet || [],
                 last_station_id: starportId
             };
@@ -9241,7 +9240,7 @@ if (gameManagerRef.current) {
                 currentSystem: systemInfo,
                 commanderName: commanderData?.commander_name || profile.commander_name || user.name,
                 globalMarkets: seedNPCMarketListings(savedState.globalMarkets || {}),
-                ownedShips: commanderData.owned_ships || [] // PERSISTENCE FIX: Load full fleet manifest
+                ownedShips: [] // authoritative fleet manifest now comes from hangar state / commander websocket sync
             };
 
             // Link the manifested ship to the active game state
@@ -9250,7 +9249,8 @@ if (gameManagerRef.current) {
                 // ✅ If the player already has ships stored in hangar (common for brand-new profiles after starter kit),
                 // use the first stored ship as the active fleet entry to avoid "double ship" manifests.
                 if (Array.isArray(newState.hangarShips) && newState.hangarShips.length > 0) {
-                    const primary = newState.hangarShips[0];
+                    const desiredActiveShipId = commanderData.active_ship_id || null;
+                    const primary = newState.hangarShips.find(s => s?.id === desiredActiveShipId) || newState.hangarShips[0];
                     // Hydrate the primary hangar ship with telemetry so the active craft reflects ship_states_v2.
                     activeShip = hydrateVessel(primary, primary, telemetry);
                     // Mirror hangar ships into ownedShips for the fleet manifest.
@@ -10504,11 +10504,8 @@ showStarportUI: function (starportId) {
                     hangarShips: [...(prev.hangarShips || []), shipToSave]
                 };
                 
-                // CRITICAL: Immediate Cloud Manifest Sync to prevent race conditions on refresh
-                cloudService.updateCommanderData(cloudUser.id, {
-                    owned_ships: newState.ownedShips
-                });
-                
+                // owned_ships manifest persistence removed; hangar_states is authoritative
+
                 return newState;
             });
             
@@ -11535,10 +11532,7 @@ backendSocket.sendUndock(
                         ownedShips: [...prev.ownedShips, hydratedShip]
                     };
                     
-                    // PERSISTENCE FIX: Sync manifest change to cloud immediately
-                    cloudService.updateCommanderData(cloudUser.id, {
-                        owned_ships: newState.ownedShips
-                    });
+                    // owned_ships manifest persistence removed; hangar_states is authoritative
                     
                     return newState;
                 });

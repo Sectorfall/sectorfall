@@ -842,6 +842,11 @@ async saveInventoryState(playerId, starportId, items, context = "unknown") {
       const explicitClearActiveShipId = nextPayload.explicit_clear_active_ship_id === true;
       delete nextPayload.explicit_clear_active_ship_id;
 
+      // owned_ships is no longer persisted in commander_data; hangar_states is authoritative.
+      if (Object.prototype.hasOwnProperty.call(nextPayload, 'owned_ships')) {
+        delete nextPayload.owned_ships;
+      }
+
       if (nextPayload.commander_name) {
         const normalizedName = nextPayload.commander_name.trim().toUpperCase();
         const { data: existing, error: checkError } = await supabase

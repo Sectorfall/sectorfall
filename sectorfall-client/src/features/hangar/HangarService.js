@@ -231,10 +231,7 @@ export const transferShipFromHangar = async ({
         hangarShips: prev.hangarShips.filter(s => s.id !== item.id),
         ownedShips: [...prev.ownedShips, hydratedShip]
       };
-
-      cloudService.updateCommanderData(cloudUser.id, {
-        owned_ships: newState.ownedShips
-      });
+      // owned_ships manifest persistence removed; hangar_states is authoritative
 
       return newState;
     });

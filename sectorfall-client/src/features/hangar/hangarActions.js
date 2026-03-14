@@ -75,10 +75,7 @@ export const createHangarActionHandlers = ({
                     ownedShips: prev.ownedShips.filter(s => s.id !== ship.id),
                     hangarShips: [...(prev.hangarShips || []), shipToSave]
                 };
-
-                cloudService.updateCommanderData(cloudUser.id, {
-                    owned_ships: newState.ownedShips
-                });
+      // owned_ships manifest persistence removed; hangar_states is authoritative
 
                 return newState;
             });
